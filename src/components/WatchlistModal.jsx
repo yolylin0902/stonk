@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square } from 'lucide-react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square, Search, ArrowRight } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { autoLookupStock } from '../lib/stockLookup'
 
 export default function WatchlistModal({
   isOpen,
@@ -13,17 +14,21 @@ export default function WatchlistModal({
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('ALL') // 'ALL', 'US', 'TW'
 
-  // 表單狀態
-  const [symbol, setSymbol] = useState('')
-  const [name, setName] = useState('')
-  const [market, setMarket] = useState('US')
+  // 輸入狀態
+  const [symbolInput, setSymbolInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
+
+  // 即時自動辨識股票
+  const detectedStock = useMemo(() => {
+    return autoLookupStock(symbolInput)
+  }, [symbolInput])
 
   useEffect(() => {
     if (isOpen) {
       loadWatchlist()
       setFeedback({ type: '', message: '' })
+      setSymbolInput('')
     }
   }, [isOpen])
 
@@ -48,19 +53,19 @@ export default function WatchlistModal({
 
   const handleAddStock = async (e) => {
     e.preventDefault()
-    if (!symbol.trim() || !name.trim()) {
-      setFeedback({ type: 'error', message: '請填寫股票代號與公司名稱' })
+    if (!symbolInput.trim()) {
+      setFeedback({ type: 'error', message: '請輸入股票代號（例如 SMCI, 2330, NVDA）' })
       return
     }
 
-    const cleanSymbol = symbol.trim().toUpperCase()
-    const cleanName = name.trim()
-
-    // 格式防呆
-    if (market === 'TW' && !cleanSymbol.endsWith('.TW') && !cleanSymbol.endsWith('.TWO')) {
-      setFeedback({ type: 'error', message: '台股代號請加上 .TW (例如 2330.TW)' })
+    // 自動爬梳代號與公司名稱
+    const stockInfo = detectedStock || autoLookupStock(symbolInput)
+    if (!stockInfo) {
+      setFeedback({ type: 'error', message: '無法辨識此代號，請確認代號是否正確！' })
       return
     }
+
+    const { symbol: cleanSymbol, name: cleanName, market: cleanMarket } = stockInfo
 
     try {
       setIsSubmitting(true)
@@ -70,7 +75,7 @@ export default function WatchlistModal({
         {
           symbol: cleanSymbol,
           name: cleanName,
-          market: market,
+          market: cleanMarket,
         },
       ]).select()
 
@@ -79,26 +84,28 @@ export default function WatchlistModal({
           // 已存在於資料庫，但自動幫當前成員打勾加入持倉
           if (currentProfile && onUpdateProfileHoldings) {
             onUpdateProfileHoldings(cleanSymbol, true)
-            setFeedback({ type: 'success', message: `${cleanSymbol} 已加入 ${currentProfile.name} 的個人持倉！` })
+            setFeedback({ type: 'success', message: `✨ ${cleanName} (${cleanSymbol}) 已加入【${currentProfile.name}】的持倉！` })
           } else {
-            throw new Error('此股票代號已存在於自選庫中！')
+            setFeedback({ type: 'error', message: `${cleanSymbol} 已在觀察庫中！` })
           }
-          setSymbol('')
-          setName('')
+          setSymbolInput('')
           loadWatchlist()
+          if (onUpdated) onUpdated()
           return
         }
         throw error
       }
 
-      // 新增成功的同時，自動勾選加入當前家庭成員的持倉
+      // 新增成功，自動勾選加入當前使用者持倉
       if (currentProfile && onUpdateProfileHoldings) {
         onUpdateProfileHoldings(cleanSymbol, true)
       }
 
-      setFeedback({ type: 'success', message: `已成功新增 ${cleanName} (${cleanSymbol}) 並納入 ${currentProfile?.name || '個人'} 持倉！` })
-      setSymbol('')
-      setName('')
+      setFeedback({
+        type: 'success',
+        message: `🎉 已自動識別並加入：${cleanName} (${cleanSymbol})！`
+      })
+      setSymbolInput('')
       loadWatchlist()
       if (onUpdated) onUpdated()
     } catch (err) {
@@ -142,7 +149,7 @@ export default function WatchlistModal({
     : watchlist.filter((s) => s.market === activeTab)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
       <div className="w-full sm:max-w-md bg-[#0F172A] rounded-t-3xl sm:rounded-2xl border border-slate-800 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Modal 標題列 */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/50">
@@ -155,7 +162,7 @@ export default function WatchlistModal({
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400">勾選為【{currentProfile?.name}】持股，或新增全域追蹤股票</p>
+            <p className="text-xs text-slate-400 mt-0.5">輸入代號自動識別公司名稱並加入觀察</p>
           </div>
           <button
             onClick={onClose}
@@ -184,72 +191,67 @@ export default function WatchlistModal({
           </div>
         )}
 
-        {/* 新增股票表單 */}
-        <form onSubmit={handleAddStock} className="p-5 border-b border-slate-800 bg-slate-900/30">
-          <div className="text-xs font-semibold text-slate-300 mb-2.5">新增追蹤標的</div>
+        {/* 智慧極簡新增股票表單（只要輸入代號，自動爬出名稱與市場） */}
+        <form onSubmit={handleAddStock} className="p-4 border-b border-slate-800 bg-slate-900/40 space-y-2.5">
+          <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+            <span>新增追蹤標的</span>
+            <span className="text-[10px] text-blue-400 font-normal">免打中文 · 自動抓取</span>
+          </label>
           
-          <div className="grid grid-cols-3 gap-2 mb-2.5">
-            <div className="col-span-1">
-              <label htmlFor="market-select" className="text-[10px] text-slate-400 block mb-1">市場</label>
-              <select
-                id="market-select"
-                value={market}
-                onChange={(e) => setMarket(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-medium"
-              >
-                <option value="US">🇺🇸 美股</option>
-                <option value="TW">🇹🇼 台股</option>
-              </select>
-            </div>
-
-            <div className="col-span-2">
-              <label htmlFor="symbol-input" className="text-[10px] text-slate-400 block mb-1">
-                代號 {market === 'TW' ? '(如 2330.TW)' : '(如 NVDA)'}
-              </label>
-              <input
-                id="symbol-input"
-                type="text"
-                placeholder={market === 'TW' ? '2330.TW' : 'NVDA'}
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white uppercase placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono"
-              />
-            </div>
-          </div>
-
           <div className="flex space-x-2">
-            <div className="flex-1">
-              <label htmlFor="name-input" className="text-[10px] text-slate-400 block mb-1">公司名稱 (如 輝達)</label>
+            <div className="relative flex-1">
               <input
-                id="name-input"
                 type="text"
-                placeholder="公司名稱"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-medium"
+                placeholder="輸入代號 (如 SMCI, 2330, NVDA, TSLA)"
+                value={symbolInput}
+                onChange={(e) => setSymbolInput(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white uppercase placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono tracking-wide"
+                autoFocus
               />
             </div>
-            <div className="flex items-end">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="h-[37px] px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-md shadow-blue-600/30 hover:opacity-95 active:scale-95 disabled:opacity-50 transition-all"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <>
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>新增</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <button
+              type="submit"
+              disabled={isSubmitting || !symbolInput.trim()}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-xs flex items-center space-x-1 shadow-md shadow-blue-600/30 hover:opacity-95 active:scale-95 disabled:opacity-40 transition-all flex-shrink-0"
+            >
+              {isSubmitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  <span>加入觀察</span>
+                </>
+              )}
+            </button>
           </div>
+
+          {/* 即時智慧識別預覽條 */}
+          {symbolInput.trim() && (
+            <div className="rounded-xl bg-slate-800/60 border border-slate-700/60 px-3 py-2 text-xs flex items-center justify-between animate-fadeIn">
+              {detectedStock ? (
+                <div className="flex items-center space-x-2 truncate">
+                  <span className="text-sm">{detectedStock.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
+                  <div className="truncate">
+                    <span className="font-bold text-white mr-1.5">{detectedStock.name}</span>
+                    <span className="font-mono text-slate-400 text-[11px] font-semibold">({detectedStock.symbol})</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-slate-400 text-[11px]">
+                  正在識別代號... (台股請輸代碼如 2330，美股如 NVDA)
+                </div>
+              )}
+              {detectedStock && (
+                <span className="text-[10px] text-emerald-400 font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 flex-shrink-0 ml-2">
+                  已識別
+                </span>
+              )}
+            </div>
+          )}
         </form>
 
         {/* 頁籤篩選 */}
-        <div className="flex items-center px-5 py-2.5 bg-slate-900/50 border-b border-slate-800/80 justify-between">
+        <div className="flex items-center px-5 py-2 bg-slate-900/50 border-b border-slate-800/80 justify-between">
           <div className="flex space-x-2">
             {[
               { id: 'ALL', label: '全部' },
@@ -283,7 +285,7 @@ export default function WatchlistModal({
             </div>
           ) : filteredWatchlist.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs">
-              目前暫無股票，請利用上方表單新增！
+              目前暫無自選個股，輸入代號即可一鍵加入！
             </div>
           ) : (
             filteredWatchlist.map((item) => {

@@ -255,17 +255,6 @@ export default function ParkSleepSection() {
               </div>
             ))}
           </div>
-
-          {/* 韭菜金句心靈撫慰 */}
-          <div
-            onClick={triggerCheer}
-            className="cursor-pointer rounded-xl border border-slate-800 bg-slate-800/30 p-2.5 text-[11px] text-slate-300 hover:bg-slate-800/50 transition-all flex items-start space-x-2 active:scale-[0.99]"
-          >
-            <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-amber-400 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-slate-300 italic">{randomQuote}</p>
-            </div>
-          </div>
         </div>
       )}
     </div>

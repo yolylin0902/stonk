@@ -227,13 +227,13 @@ def fetch_google_news(symbol: str, name: str, market: str, limit: int = 6) -> Li
     美股語系：hl=en-US&gl=US&ceid=US:en
     台股語系：hl=zh-TW&gl=TW&ceid=TW:zh-Hant
     """
+    clean_sym = symbol.replace("^", "").replace(".TW", "").replace(".TWO", "").strip()
+    clean_name = re.sub(r"\(.*?\)", "", name).strip()
     if market.upper() == "US":
-        query = f"{symbol} {name} stock news"
+        query = f"{clean_name} {clean_sym} stock news"
         hl, gl, ceid = "en-US", "US", "US:en"
     else:
-        # 台股去除 .TW 後綴做新聞搜尋更準確，但保留代號以防重名
-        clean_symbol = symbol.replace(".TW", "").replace(".TWO", "")
-        query = f"{name} {clean_symbol} 股價 新聞"
+        query = f"{clean_name} {clean_sym} 股價 新聞"
         hl, gl, ceid = "zh-TW", "TW", "TW:zh-Hant"
 
     encoded_query = urllib.parse.quote(query)

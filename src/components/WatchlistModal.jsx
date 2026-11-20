@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react'
-import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square, Search, ArrowRight } from 'lucide-react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square, Search, ArrowRight, TrendingUp } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { autoLookupStock } from '../lib/stockLookup'
+import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
 
 export default function WatchlistModal({
   isOpen,
@@ -14,15 +14,21 @@ export default function WatchlistModal({
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('ALL') // 'ALL', 'US', 'TW'
 
-  // 輸入狀態
+  // 輸入狀態與雙向搜尋
   const [symbolInput, setSymbolInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
+  const [isDropdownFocused, setIsDropdownFocused] = useState(false)
 
-  // 即時自動辨識股票
-  const detectedStock = useMemo(() => {
-    return autoLookupStock(symbolInput)
+  // 雙向搜尋建議清單 (支援中文/英文關鍵字與股票代號)
+  const searchResults = useMemo(() => {
+    return searchStocksTwoWay(symbolInput, 6)
   }, [symbolInput])
+
+  // 即時自動辨識之最佳股票
+  const detectedStock = useMemo(() => {
+    return searchResults[0] || autoLookupStock(symbolInput)
+  }, [searchResults, symbolInput])
 
   useEffect(() => {
     if (isOpen) {
@@ -32,17 +38,42 @@ export default function WatchlistModal({
     }
   }, [isOpen])
 
+  // 讀取自選股清單（同時交叉比對 daily_reports，確保歷史殘留或先前打錯的個股能被看到並清除）
   const loadWatchlist = async () => {
     try {
       setLoading(true)
-      const { data, error } = await supabase
+      // 1. 撈取 watchlist 表
+      const { data: watchData, error: wError } = await supabase
         .from('watchlist')
         .select('*')
         .order('market')
         .order('symbol')
 
-      if (error) throw error
-      setWatchlist(data || [])
+      if (wError) throw wError
+
+      // 2. 撈取 daily_reports 中所有現存的個股代號，以防有歷史殘留或先前打錯的個股
+      const { data: drData } = await supabase
+        .from('daily_reports')
+        .select('symbol, name, market')
+
+      const existingSymbols = new Set((watchData || []).map((w) => w.symbol))
+      const extraFromReports = []
+
+      if (drData) {
+        for (const dr of drData) {
+          if (!existingSymbols.has(dr.symbol) && !extraFromReports.some((e) => e.symbol === dr.symbol)) {
+            extraFromReports.push({
+              id: 'dr_' + dr.symbol,
+              symbol: dr.symbol,
+              name: dr.name || dr.symbol,
+              market: dr.market || 'US',
+              isOrphaned: true
+            })
+          }
+        }
+      }
+
+      setWatchlist([...(watchData || []), ...extraFromReports])
     } catch (err) {
       console.error('讀取自選股失敗:', err)
       setFeedback({ type: 'error', message: '讀取自選股失敗：' + (err.message || '連線異常') })
@@ -51,20 +82,9 @@ export default function WatchlistModal({
     }
   }
 
-  const handleAddStock = async (e) => {
-    e.preventDefault()
-    if (!symbolInput.trim()) {
-      setFeedback({ type: 'error', message: '請輸入股票代號（例如 SMCI, 2330, NVDA）' })
-      return
-    }
-
-    // 自動爬梳代號與公司名稱
-    const stockInfo = detectedStock || autoLookupStock(symbolInput)
-    if (!stockInfo) {
-      setFeedback({ type: 'error', message: '無法辨識此代號，請確認代號是否正確！' })
-      return
-    }
-
+  // 選取並加入股票（支援點擊搜尋建議直接加入）
+  const handleSelectAndAddStock = async (stockInfo) => {
+    if (!stockInfo) return
     const { symbol: cleanSymbol, name: cleanName, market: cleanMarket } = stockInfo
 
     try {
@@ -84,11 +104,12 @@ export default function WatchlistModal({
           // 已存在於資料庫，但自動幫當前成員打勾加入持倉
           if (currentProfile && onUpdateProfileHoldings) {
             onUpdateProfileHoldings(cleanSymbol, true)
-            setFeedback({ type: 'success', message: `✨ ${cleanName} (${cleanSymbol}) 已加入【${currentProfile.name}】的持倉！` })
+            setFeedback({ type: 'success', message: `✨ ${cleanName} (${cleanSymbol}) 已勾選加入【${currentProfile.name}】的持倉！` })
           } else {
             setFeedback({ type: 'error', message: `${cleanSymbol} 已在觀察庫中！` })
           }
           setSymbolInput('')
+          setIsDropdownFocused(false)
           loadWatchlist()
           if (onUpdated) onUpdated()
           return
@@ -106,6 +127,7 @@ export default function WatchlistModal({
         message: `🎉 已自動識別並加入：${cleanName} (${cleanSymbol})！`
       })
       setSymbolInput('')
+      setIsDropdownFocused(false)
       loadWatchlist()
       if (onUpdated) onUpdated()
     } catch (err) {
@@ -115,20 +137,44 @@ export default function WatchlistModal({
     }
   }
 
+  const handleAddStock = async (e) => {
+    e.preventDefault()
+    if (!symbolInput.trim()) {
+      setFeedback({ type: 'error', message: '請輸入股票代號或關鍵字（例如 google, 聯發科, SMCI, 2330）' })
+      return
+    }
+
+    const stockInfo = detectedStock || autoLookupStock(symbolInput)
+    if (!stockInfo) {
+      setFeedback({ type: 'error', message: '無法辨識此股票，請確認代號或公司名稱！' })
+      return
+    }
+
+    await handleSelectAndAddStock(stockInfo)
+  }
+
+  // 徹底刪除股票：同時清除 watchlist 與 daily_reports 報告，解決打錯名稱 (如 SMCI 美光) 刪不掉的問題
   const handleDeleteStock = async (id, stockName, stockSymbol) => {
-    if (!confirm(`確定要從資料庫完全移除 ${stockName} (${stockSymbol}) 嗎？`)) {
+    if (!confirm(`確定要完全刪除 ${stockName} (${stockSymbol}) 嗎？\n這將同時清除觀察清單與儀表板上的分析紀錄。`)) {
       return
     }
 
     try {
-      const { error } = await supabase.from('watchlist').delete().eq('id', id)
-      if (error) throw error
+      // 1. 從 watchlist 刪除（以 id 與 symbol 雙重確保）
+      if (id && !id.startsWith('dr_')) {
+        await supabase.from('watchlist').delete().eq('id', id)
+      }
+      await supabase.from('watchlist').delete().eq('symbol', stockSymbol)
 
+      // 2. 徹底清除 daily_reports 中的歷史紀錄
+      await supabase.from('daily_reports').delete().eq('symbol', stockSymbol)
+
+      // 3. 從當前使用者持倉中移除
       if (currentProfile && onUpdateProfileHoldings) {
         onUpdateProfileHoldings(stockSymbol, false)
       }
 
-      setFeedback({ type: 'success', message: `已移除 ${stockName} (${stockSymbol})` })
+      setFeedback({ type: 'success', message: `✅ 已徹底移除 ${stockName} (${stockSymbol})` })
       loadWatchlist()
       if (onUpdated) onUpdated()
     } catch (err) {
@@ -162,7 +208,7 @@ export default function WatchlistModal({
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">輸入代號自動識別公司名稱並加入觀察</p>
+            <p className="text-xs text-slate-400 mt-0.5">支援代號 ⇄ 中英文公司名稱雙向搜尋</p>
           </div>
           <button
             onClick={onClose}
@@ -191,64 +237,99 @@ export default function WatchlistModal({
           </div>
         )}
 
-        {/* 智慧極簡新增股票表單（只要輸入代號，自動爬出名稱與市場） */}
-        <form onSubmit={handleAddStock} className="p-4 border-b border-slate-800 bg-slate-900/40 space-y-2.5">
-          <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-            <span>新增追蹤標的</span>
-            <span className="text-[10px] text-blue-400 font-normal">免打中文 · 自動抓取</span>
-          </label>
-          
-          <div className="flex space-x-2">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                placeholder="輸入代號 (如 SMCI, 2330, NVDA, TSLA)"
-                value={symbolInput}
-                onChange={(e) => setSymbolInput(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white uppercase placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono tracking-wide"
-                autoFocus
-              />
+        {/* 雙向智慧搜尋新增表單（打代號、打中文、打英文皆可搜尋） */}
+        <div className="p-4 border-b border-slate-800 bg-slate-900/40 relative">
+          <form onSubmit={handleAddStock} className="space-y-2">
+            <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+              <span className="flex items-center space-x-1">
+                <Search className="w-3.5 h-3.5 text-blue-400" />
+                <span>雙向搜尋新增標的</span>
+              </span>
+              <span className="text-[10px] text-blue-400 font-normal">代號或中英文關鍵字</span>
+            </label>
+            
+            <div className="flex space-x-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="輸入代號或名稱 (如 google, 聯發科, SMCI, 2330)"
+                  value={symbolInput}
+                  onChange={(e) => {
+                    setSymbolInput(e.target.value)
+                    setIsDropdownFocused(true)
+                  }}
+                  onFocus={() => setIsDropdownFocused(true)}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-sans tracking-wide"
+                  autoFocus
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isSubmitting || !symbolInput.trim()}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-xs flex items-center space-x-1 shadow-md shadow-blue-600/30 hover:opacity-95 active:scale-95 disabled:opacity-40 transition-all flex-shrink-0"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>加入觀察</span>
+                  </>
+                )}
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={isSubmitting || !symbolInput.trim()}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-xs flex items-center space-x-1 shadow-md shadow-blue-600/30 hover:opacity-95 active:scale-95 disabled:opacity-40 transition-all flex-shrink-0"
-            >
-              {isSubmitting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  <Plus className="w-4 h-4" />
-                  <span>加入觀察</span>
-                </>
-              )}
-            </button>
-          </div>
+          </form>
 
-          {/* 即時智慧識別預覽條 */}
-          {symbolInput.trim() && (
-            <div className="rounded-xl bg-slate-800/60 border border-slate-700/60 px-3 py-2 text-xs flex items-center justify-between animate-fadeIn">
-              {detectedStock ? (
-                <div className="flex items-center space-x-2 truncate">
-                  <span className="text-sm">{detectedStock.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
-                  <div className="truncate">
-                    <span className="font-bold text-white mr-1.5">{detectedStock.name}</span>
-                    <span className="font-mono text-slate-400 text-[11px] font-semibold">({detectedStock.symbol})</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-slate-400 text-[11px]">
-                  正在識別代號... (台股請輸代碼如 2330，美股如 NVDA)
-                </div>
-              )}
-              {detectedStock && (
-                <span className="text-[10px] text-emerald-400 font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 flex-shrink-0 ml-2">
-                  已識別
-                </span>
-              )}
+          {/* 雙向搜尋即時下拉建議選單 */}
+          {symbolInput.trim() && isDropdownFocused && searchResults.length > 0 && (
+            <div className="absolute left-4 right-4 top-[82px] z-20 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-800">
+              <div className="px-3 py-1.5 bg-slate-950/80 text-[10px] text-slate-400 font-medium flex justify-between items-center">
+                <span>搜尋建議（點選直接加入）</span>
+                <span className="text-blue-400">共 {searchResults.length} 筆</span>
+              </div>
+              {searchResults.map((item) => {
+                const isAlreadyIn = watchlist.some((w) => w.symbol === item.symbol)
+                return (
+                  <button
+                    key={item.symbol}
+                    type="button"
+                    onClick={() => handleSelectAndAddStock(item)}
+                    className="w-full text-left px-3.5 py-2 hover:bg-slate-800/80 flex items-center justify-between transition-colors group"
+                  >
+                    <div className="flex items-center space-x-2 truncate">
+                      <span className="text-sm">{item.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
+                      <span className="font-mono text-xs font-bold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                        {item.symbol}
+                      </span>
+                      <span className="text-xs text-slate-200 font-medium truncate group-hover:text-white">
+                        {item.name}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 group-hover:text-blue-300 font-semibold flex-shrink-0 ml-2">
+                      {isAlreadyIn ? '已追蹤' : '+ 加入'}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           )}
-        </form>
+
+          {/* 若無下拉時，展示目前辨識結果 */}
+          {symbolInput.trim() && !isDropdownFocused && detectedStock && (
+            <div className="mt-2 rounded-xl bg-slate-800/60 border border-slate-700/60 px-3 py-2 text-xs flex items-center justify-between">
+              <div className="flex items-center space-x-2 truncate">
+                <span className="text-sm">{detectedStock.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
+                <div className="truncate">
+                  <span className="font-bold text-white mr-1.5">{detectedStock.name}</span>
+                  <span className="font-mono text-slate-400 text-[11px] font-semibold">({detectedStock.symbol})</span>
+                </div>
+              </div>
+              <span className="text-[10px] text-emerald-400 font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 flex-shrink-0 ml-2">
+                已辨識
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* 頁籤篩選 */}
         <div className="flex items-center px-5 py-2 bg-slate-900/50 border-b border-slate-800/80 justify-between">
@@ -285,7 +366,7 @@ export default function WatchlistModal({
             </div>
           ) : filteredWatchlist.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs">
-              目前暫無自選個股，輸入代號即可一鍵加入！
+              目前暫無自選個股，輸入代號或公司關鍵字即可一鍵加入！
             </div>
           ) : (
             filteredWatchlist.map((item) => {
@@ -327,6 +408,11 @@ export default function WatchlistModal({
                           <span className="text-[11px] font-mono text-slate-400 font-medium">
                             {item.symbol}
                           </span>
+                          {item.isOrphaned && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                              報告殘留
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-slate-400 flex items-center space-x-1">
                           <span>{item.market === 'US' ? '美股' : '台股'}</span>
@@ -342,6 +428,7 @@ export default function WatchlistModal({
                   <button
                     onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
                     aria-label="刪除"
+                    title="完全刪除（清除自選與分析報告）"
                     className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-90 transition-all ml-2"
                   >
                     <Trash2 className="w-4 h-4" />

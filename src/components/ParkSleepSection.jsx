@@ -8,9 +8,7 @@ import {
   X,
   Loader2,
   Footprints,
-  Sparkles,
-  TreePine,
-  CheckCircle2
+  TreePine
 } from 'lucide-react'
 
 // 全台代表性避難公園預設指標庫（涵蓋北、中、南、東各縣市）
@@ -111,14 +109,14 @@ function analyzeParkEnvironment(name, distance, index) {
   const walkMinutes = distance ? Math.max(1, Math.round(distance / 80)) : null
 
   let walkTag = '適度健走'
-  let walkTagColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+  let walkTagColor = 'text-white/60 bg-white/[0.06] border-white/[0.08]'
   if (walkMinutes !== null) {
     if (walkMinutes <= 5) {
       walkTag = '極近步程'
-      walkTagColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+      walkTagColor = 'text-[#6EE7B7]/90 bg-[#34D399]/[0.10] border-[#34D399]/[0.15]'
     } else if (walkMinutes <= 10) {
       walkTag = '輕鬆步行'
-      walkTagColor = 'text-blue-400 bg-blue-500/10 border-blue-500/20'
+      walkTagColor = 'text-white/80 bg-white/[0.08] border-white/[0.10]'
     }
   }
 
@@ -421,118 +419,117 @@ export default function ParkSleepSection() {
   const nearest = displayList[0]
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3.5 text-slate-100 transition-all shadow-sm">
-      {/* 標題列 (已移除韭菜過夜指南尾綴) */}
+    <div className="rounded-[28px] ios-glass p-4 text-white transition-all shadow-sm">
+      {/* 標題列 */}
       <div
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex cursor-pointer items-center justify-between select-none"
       >
         <div className="flex items-center space-x-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <MapPin className="h-4 w-4" />
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.08] text-white/70">
+            <MapPin className="h-4 w-4" strokeWidth={1.75} />
           </div>
           <div>
             <div className="flex items-center space-x-1.5">
-              <span className="text-xs font-bold text-slate-200">
-                附近避難公園雷達
+              <span className="text-[13px] font-semibold text-white/90">
+                周邊休閒公園
               </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 font-mono border border-blue-500/20">
-                自動分析
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/45 font-medium">
+                鄰里分析
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-white/40">
               {userLocation && nearest?.distance
                 ? `最近步行點：${nearest.name} (約 ${nearest.walkMinutes} 分鐘 · ${formatDistance(
                     nearest.distance
                   )})`
-                : '點擊自動探測步行可達之鄰里小公園與休閒綠地'}
+                : '點擊展開查看鄰里公園與步程'}
             </p>
           </div>
         </div>
 
-        <button className="text-slate-400 hover:text-slate-200 p-1">
+        <button className="text-white/40 hover:text-white/70 p-1 rounded-full transition-colors">
           {isExpanded ? (
-            <ChevronUp className="h-4 w-4" />
+            <ChevronUp className="h-4 w-4" strokeWidth={1.75} />
           ) : (
-            <ChevronDown className="h-4 w-4" />
+            <ChevronDown className="h-4 w-4" strokeWidth={1.75} />
           )}
         </button>
       </div>
 
       {/* 展開後的內容 */}
       {isExpanded && (
-        <div className="mt-3 space-y-3.5 pt-3 border-t border-slate-800 animate-fade-in">
+        <div className="mt-3.5 space-y-3 pt-3.5 border-t border-white/[0.07] ios-fade-in">
           {/* 核心主打操作：一鍵自動分析周邊步行公園 */}
           <div className="space-y-2">
             <button
               onClick={handleAutoScanNearbyParks}
               disabled={isScanning}
-              className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-600/20 active:scale-[0.98] transition-all"
+              className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-white/[0.12] hover:bg-white/[0.18] text-white font-medium text-xs border border-white/[0.10] active:scale-[0.98] transition-all duration-150"
             >
               {isScanning ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>正在自動探測分析附近所有步行公園...</span>
+                  <Loader2 className="w-4 h-4 animate-spin text-white/70" strokeWidth={1.75} />
+                  <span>正在自動分析身邊步行公園...</span>
                 </>
               ) : (
                 <>
-                  <Navigation className="w-4 h-4 text-white" />
-                  <span>📍 一鍵自動分析附近公園 (步行 15 分鐘以內)</span>
+                  <Navigation className="w-4 h-4 text-white/80" strokeWidth={1.75} />
+                  <span>自動分析附近公園 (步行 15 分鐘內)</span>
                 </>
               )}
             </button>
 
             {/* 狀態與定位提示 */}
             {userLocation && (
-              <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
-                <span className="flex items-center space-x-1.5 text-emerald-400 font-mono">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <div className="flex items-center justify-between text-[11px] text-white/40 px-1">
+                <span className="flex items-center space-x-1.5 text-white/60 font-mono">
+                  <span className="flex h-1.5 w-1.5 rounded-full bg-[#34D399]" />
                   <span>
-                    GPS已定位 {userDistrict ? `(${userDistrict})` : ''} · 支援精準步行測算
+                    GPS 定位 {userDistrict ? `(${userDistrict})` : ''}
                   </span>
                 </span>
                 <button
                   onClick={handleAutoScanNearbyParks}
                   disabled={isScanning}
-                  className="text-blue-400 hover:text-blue-300 underline"
+                  className="text-white/60 hover:text-white underline"
                 >
-                  重新探測
+                  重新分析
                 </button>
               </div>
             )}
 
             {statusMessage && (
-              <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-[11px] text-slate-300 flex items-start space-x-2">
-                <Sparkles className="w-3.5 h-3.5 text-blue-400 mt-0.5 flex-shrink-0" />
-                <span className="leading-relaxed">{statusMessage}</span>
+              <div className="p-2.5 rounded-xl bg-white/[0.05] border border-white/[0.07] text-[11px] text-white/70 flex items-start space-x-2 leading-relaxed">
+                <span>{statusMessage}</span>
               </div>
             )}
           </div>
 
           {/* 備用手動查詢：輸入住家旁路名或里名 */}
           <form onSubmit={handleCustomSearch} className="relative flex items-center">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 pointer-events-none" />
+            <Search className="w-3.5 h-3.5 text-white/30 absolute left-3 pointer-events-none" strokeWidth={1.75} />
             <input
               type="text"
               value={customQuery}
               onChange={(e) => setCustomQuery(e.target.value)}
-              placeholder="或輸入特定小公園/里名 (例：大智、永春、介壽、四號公園)..."
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-16 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+              placeholder="或輸入特定公園、行政區..."
+              className="w-full bg-white/[0.06] border border-white/[0.09] rounded-xl pl-8 pr-16 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-white/[0.20] transition-colors"
             />
             <div className="absolute right-1 flex items-center space-x-1">
               {customQuery && (
                 <button
                   type="button"
                   onClick={() => setCustomQuery('')}
-                  className="p-1 text-slate-400 hover:text-slate-200"
+                  className="p-1 text-white/30 hover:text-white/70"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3 h-3" strokeWidth={1.75} />
                 </button>
               )}
               <button
                 type="submit"
                 disabled={isScanning || !customQuery.trim()}
-                className="px-2 py-1 bg-slate-800 text-blue-400 hover:bg-slate-700 rounded-lg text-[11px] font-semibold transition-all disabled:opacity-40"
+                className="px-2.5 py-1 bg-white/[0.10] text-white/80 hover:bg-white/[0.16] rounded-lg text-[11px] font-medium transition-all disabled:opacity-30"
               >
                 分析
               </button>
@@ -542,21 +539,21 @@ export default function ParkSleepSection() {
           {/* 步行時間篩選標籤 (僅在有分析結果時顯示) */}
           {analyzedParks && (
             <div className="flex items-center justify-between pt-1 text-xs">
-              <span className="text-[11px] text-slate-400 font-medium">步行時間篩選：</span>
-              <div className="flex items-center space-x-1">
+              <span className="text-[11px] text-white/40 font-medium">步程篩選：</span>
+              <div className="flex items-center p-0.5 bg-white/[0.06] rounded-full space-x-0.5">
                 {[
                   { label: '全部', val: null },
-                  { label: '5分鐘內', val: 5 },
-                  { label: '10分鐘內', val: 10 },
-                  { label: '15分鐘內', val: 15 }
+                  { label: '5分鐘', val: 5 },
+                  { label: '10分鐘', val: 10 },
+                  { label: '15分鐘', val: 15 }
                 ].map((chip) => (
                   <button
                     key={chip.label}
                     onClick={() => setWalkFilter(chip.val)}
-                    className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-all ${
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-all duration-150 ${
                       walkFilter === chip.val
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                        ? 'bg-white/[0.16] text-white shadow-sm'
+                        : 'text-white/40 hover:text-white/70'
                     }`}
                   >
                     {chip.label}
@@ -568,52 +565,52 @@ export default function ParkSleepSection() {
 
           {/* 列表標題列 */}
           <div className="flex items-center justify-between text-xs pt-1">
-            <span className="font-bold text-slate-200 flex items-center space-x-1.5">
-              <TreePine className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-medium text-white/70 flex items-center space-x-1.5">
+              <TreePine className="w-3.5 h-3.5 text-white/60" strokeWidth={1.75} />
               <span>
                 {analyzedParks
-                  ? `分析結果 (${displayList.length} 處鄰里小公園)`
-                  : '指標公園預覽 (點擊上方按鈕可自動分析住家周邊)'}
+                  ? `分析結果 (${displayList.length})`
+                  : '指標公園'}
               </span>
             </span>
 
             {analyzedParks && (
               <button
                 onClick={handleReset}
-                className="text-[11px] text-slate-400 hover:text-slate-200 underline"
+                className="text-[11px] text-white/40 hover:text-white/70 underline"
               >
-                重設清單
+                重設
               </button>
             )}
           </div>
 
-          {/* 公園分析卡片列表 (完全在頁面內呈現分析，無外部跳轉) */}
+          {/* 公園分析卡片列表 */}
           <div className="space-y-2.5">
             {displayList.length === 0 ? (
-              <div className="p-6 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-400 space-y-1">
-                <p>在選定的步行時間內無符合的公園</p>
+              <div className="p-6 rounded-2xl border border-dashed border-white/[0.07] text-center text-xs text-white/40 space-y-1">
+                <p>在選定的步程內無符合的公園</p>
                 <button
                   onClick={() => setWalkFilter(null)}
-                  className="text-blue-400 hover:text-blue-300 underline text-[11px]"
+                  className="text-white/60 hover:text-white underline text-[11px]"
                 >
-                  清除篩選顯示全部
+                  顯示全部
                 </button>
               </div>
             ) : (
               displayList.map((park) => (
                 <div
                   key={park.id}
-                  className="rounded-xl bg-slate-800/40 border border-slate-800 p-3 text-xs transition-all hover:border-slate-700/80 space-y-2"
+                  className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3 text-xs transition-all hover:border-white/[0.12] space-y-2"
                 >
-                  {/* 名稱與步行時間大徽章 */}
+                  {/* 名稱與步行時間 */}
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center space-x-1.5 flex-wrap">
-                        <span className="font-bold text-white text-[13px]">
+                        <span className="font-semibold text-white/95 text-[13px]">
                           {park.name}
                         </span>
                         {park.city && (
-                          <span className="text-[10px] text-slate-400">
+                          <span className="text-[10px] text-white/40">
                             {park.city}
                           </span>
                         )}
@@ -623,31 +620,30 @@ export default function ParkSleepSection() {
                     {/* 步行時長與距離徽章 */}
                     {park.walkMinutes !== null ? (
                       <div className="flex flex-col items-end flex-shrink-0">
-                        <div className="flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold text-[11px]">
-                          <Footprints className="w-3 h-3 text-emerald-400" />
-                          <span>步行約 {park.walkMinutes} 分鐘</span>
+                        <div className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-white/[0.08] text-white/80 border border-white/[0.08] font-medium text-[11px] tabular-nums">
+                          <Footprints className="w-3 h-3 text-white/60" strokeWidth={1.75} />
+                          <span>約 {park.walkMinutes} 分鐘</span>
                         </div>
-                        <span className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                        <span className="text-[10px] text-white/35 mt-0.5 font-mono tabular-nums">
                           ({formatDistance(park.distance)})
                         </span>
                       </div>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-400 border border-slate-700/60 text-[10px]">
-                        指標綠地
+                      <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-white/40 text-[10px]">
+                        指標
                       </span>
                     )}
                   </div>
 
-                  {/* 設施特色標籤 (Features) */}
+                  {/* 設施特色標籤 */}
                   {park.features && park.features.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-0.5">
                       {park.features.map((feat) => (
                         <span
                           key={feat}
-                          className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 text-[10px] border border-slate-700/50 flex items-center space-x-1"
+                          className="px-1.5 py-0.5 rounded bg-white/[0.05] text-white/60 text-[10px] border border-white/[0.06]"
                         >
-                          <CheckCircle2 className="w-2.5 h-2.5 text-blue-400" />
-                          <span>{feat}</span>
+                          {feat}
                         </span>
                       ))}
                       {park.walkTag && (
@@ -661,8 +657,8 @@ export default function ParkSleepSection() {
                   )}
 
                   {/* 綜合環境分析短評 */}
-                  <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80 text-[11px] text-slate-300 leading-relaxed">
-                    <span className="text-blue-400 font-semibold mr-1">環境分析：</span>
+                  <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-white/65 leading-relaxed">
+                    <span className="text-white/45 font-medium mr-1">環境分析：</span>
                     {park.analysisSummary}
                   </div>
                 </div>

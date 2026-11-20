@@ -2,29 +2,28 @@ import React from 'react'
 
 export default function MarketTabs({ activeMarket, onSelectMarket, counts }) {
   const tabs = [
-    { key: 'US', label: '美股盤後', flag: '🇺🇸', count: counts.US || 0 },
-    { key: 'TW', label: '台股盤後', flag: '🇹🇼', count: counts.TW || 0 },
+    { key: 'US', label: '美股', count: counts.US || 0 },
+    { key: 'TW', label: '台股', count: counts.TW || 0 },
   ]
 
   return (
-    <div className="grid grid-cols-2 p-1 bg-slate-900/80 rounded-2xl border border-slate-800">
+    <div className="flex p-1 bg-white/[0.07] rounded-full border border-white/[0.07]">
       {tabs.map((tab) => {
         const isActive = activeMarket === tab.key
         return (
           <button
             key={tab.key}
             onClick={() => onSelectMarket(tab.key)}
-            className={`flex items-center justify-center space-x-2 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 active:scale-[0.98] ${
+            className={`flex-1 flex items-center justify-center space-x-2 py-2 rounded-full text-[14px] font-medium transition-all duration-200 active:scale-[0.97] ${
               isActive
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                ? 'bg-white/[0.16] text-white shadow-sm'
+                : 'text-white/45 hover:text-white/70'
             }`}
           >
-            <span>{tab.flag}</span>
             <span>{tab.label}</span>
             <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                isActive ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-400'
+              className={`text-[11px] font-semibold tabular ${
+                isActive ? 'text-white/70' : 'text-white/25'
               }`}
             >
               {tab.count}

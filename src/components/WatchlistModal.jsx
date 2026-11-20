@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square, Search, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { X, Plus, Trash2, AlertCircle, Check, Loader2, CheckSquare, Square, Search } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
 
@@ -113,7 +113,7 @@ export default function WatchlistModal({
           // 已存在於資料庫，但自動幫當前成員打勾加入持倉
           if (currentProfile && onUpdateProfileHoldings) {
             onUpdateProfileHoldings(cleanSymbol, true)
-            setFeedback({ type: 'success', message: `✨ ${cleanName} (${cleanSymbol}) 已勾選加入【${currentProfile.name}】的持倉！` })
+            setFeedback({ type: 'success', message: `${cleanName} (${cleanSymbol}) 已加入持倉` })
           } else {
             setFeedback({ type: 'error', message: `${cleanSymbol} 已在觀察庫中！` })
           }
@@ -133,7 +133,7 @@ export default function WatchlistModal({
 
       setFeedback({
         type: 'success',
-        message: `🎉 已成功加入【${cleanName} (${cleanSymbol})】！即時同步守護程序已啟動，幾秒內即可在儀表板看到完整報告！`
+        message: `已加入【${cleanName} (${cleanSymbol})】`
       })
       setSymbolInput('')
       setIsDropdownFocused(false)
@@ -183,7 +183,7 @@ export default function WatchlistModal({
         onUpdateProfileHoldings(stockSymbol, false)
       }
 
-      setFeedback({ type: 'success', message: `✅ 已徹底移除 ${stockName} (${stockSymbol})` })
+      setFeedback({ type: 'success', message: `已移除 ${stockName} (${stockSymbol})` })
       loadWatchlist()
       if (onUpdated) onUpdated()
     } catch (err) {
@@ -204,57 +204,60 @@ export default function WatchlistModal({
     : watchlist.filter((s) => s.market === activeTab)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-      <div className="w-full sm:max-w-md bg-[#0F172A] rounded-t-3xl sm:rounded-2xl border border-slate-800 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-md">
+      <div className="w-full sm:max-w-md ios-glass rounded-t-[32px] sm:rounded-[28px] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col ios-fade-in">
+        {/* iOS Grabber */}
+        <div className="w-9 h-1 rounded-full bg-white/25 mx-auto mt-3 mb-1 flex-shrink-0" />
+
         {/* Modal 標題列 */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/50">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.07] flex-shrink-0">
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-base font-bold text-white">管理持倉與自選股</h2>
+              <h2 className="text-[17px] font-semibold text-white/95 tracking-tight">自選股</h2>
               {currentProfile && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/[0.08] text-white/60 font-medium">
                   {currentProfile.avatar} {currentProfile.name}
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">搜尋代號或名稱，即時顯示最新行情與資訊</p>
+            <p className="text-[12px] text-white/40 mt-0.5">搜尋代號或名稱加入觀察</p>
           </div>
           <button
             onClick={onClose}
             aria-label="關閉視窗"
-            className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+            className="p-2 rounded-full bg-white/[0.08] hover:bg-white/[0.14] text-white/60 hover:text-white transition-all duration-150 active:scale-[0.94]"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" strokeWidth={1.75} />
           </button>
         </div>
 
         {/* 回饋訊息 */}
         {feedback.message && (
           <div
-            className={`mx-5 mt-4 p-3 rounded-xl text-xs flex items-center space-x-2 border ${
+            className={`mx-5 mt-3 p-3 rounded-2xl text-xs flex items-center space-x-2 ${
               feedback.type === 'error'
-                ? 'bg-rose-500/10 text-rose-300 border-rose-500/20'
-                : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                ? 'bg-[#FB7185]/[0.10] text-[#FDA4AF]/90 border border-[#FB7185]/[0.18]'
+                : 'bg-[#34D399]/[0.08] text-[#6EE7B7]/90 border border-[#34D399]/[0.15]'
             }`}
           >
             {feedback.type === 'error' ? (
-              <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-400" />
+              <AlertCircle className="w-4 h-4 flex-shrink-0 opacity-80" strokeWidth={1.75} />
             ) : (
-              <Check className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+              <Check className="w-4 h-4 flex-shrink-0 opacity-80" strokeWidth={1.75} />
             )}
             <span>{feedback.message}</span>
           </div>
         )}
 
-        {/* 雙向智慧搜尋新增表單（打代號、打中文、打英文皆可搜尋） */}
-        <div className="p-4 border-b border-slate-800 bg-slate-900/40 relative">
+        {/* 雙向智慧搜尋新增表單 */}
+        <div className="p-4 border-b border-white/[0.07] relative flex-shrink-0">
           <form onSubmit={handleAddStock} className="space-y-2">
-            <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-              <span className="flex items-center space-x-1">
-                <Search className="w-3.5 h-3.5 text-blue-400" />
-                <span>雙向搜尋股票</span>
+            <label className="text-[11px] font-medium text-white/45 flex items-center justify-between">
+              <span className="flex items-center space-x-1.5">
+                <Search className="w-3.5 h-3.5" strokeWidth={1.75} />
+                <span>搜尋</span>
               </span>
-              <span className="text-[10px] text-blue-400 font-normal">代號或中英文名稱皆可</span>
+              <span className="text-[10px] text-white/30">代號或中英文名稱</span>
             </label>
             
             <div className="flex space-x-2">
@@ -268,21 +271,21 @@ export default function WatchlistModal({
                     setIsDropdownFocused(true)
                   }}
                   onFocus={() => setIsDropdownFocused(true)}
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-sans tracking-wide"
+                  className="w-full bg-white/[0.06] border border-white/[0.09] rounded-xl px-3.5 py-2.5 text-[13px] text-white placeholder-white/30 focus:outline-none focus:border-white/[0.20] font-sans tracking-wide transition-colors"
                   autoFocus
                 />
               </div>
               <button
                 type="submit"
                 disabled={isSubmitting || !symbolInput.trim()}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-xs flex items-center space-x-1 shadow-md shadow-blue-600/30 hover:opacity-95 active:scale-95 disabled:opacity-40 transition-all flex-shrink-0"
+                className="px-4 py-2.5 rounded-xl bg-white/[0.14] hover:bg-white/[0.20] text-white font-medium text-[13px] flex items-center space-x-1.5 active:scale-[0.97] disabled:opacity-30 transition-all duration-150 flex-shrink-0"
               >
                 {isSubmitting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.75} />
                 ) : (
                   <>
-                    <Plus className="w-4 h-4" />
-                    <span>加入觀察</span>
+                    <Plus className="w-4 h-4" strokeWidth={1.75} />
+                    <span>加入</span>
                   </>
                 )}
               </button>
@@ -291,10 +294,10 @@ export default function WatchlistModal({
 
           {/* 雙向搜尋即時下拉建議選單（每檔股票即時展示價格、漲跌幅與持股資訊） */}
           {symbolInput.trim() && isDropdownFocused && searchResults.length > 0 && (
-            <div className="absolute left-4 right-4 top-[82px] z-20 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-800 max-h-64 overflow-y-auto">
-              <div className="px-3 py-1.5 bg-slate-950/90 text-[10px] text-slate-400 font-medium flex justify-between items-center sticky top-0 z-10">
-                <span>搜尋建議與最新行情</span>
-                <span className="text-blue-400">共 {searchResults.length} 筆</span>
+            <div className="absolute left-4 right-4 top-[82px] z-20 bg-[#1c1c1e]/95 backdrop-blur-xl border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden divide-y divide-white/[0.07] max-h-64 overflow-y-auto">
+              <div className="px-3 py-1.5 bg-[#161618]/90 text-[10px] text-white/40 font-medium flex justify-between items-center sticky top-0 z-10 border-b border-white/[0.06]">
+                <span>搜尋建議</span>
+                <span className="text-white/50 tabular-nums">共 {searchResults.length} 筆</span>
               </div>
               {searchResults.map((item) => {
                 const isAlreadyIn = watchlist.some((w) => w.symbol === item.symbol)
@@ -306,12 +309,12 @@ export default function WatchlistModal({
                 const isUp = changePct > 0
                 const isDown = changePct < 0
 
-                let priceColor = 'text-slate-400'
+                let priceColor = 'text-white/40'
                 if (hasPrice) {
                   if (isUS) {
-                    priceColor = isUp ? 'text-emerald-400' : (isDown ? 'text-rose-400' : 'text-slate-300')
+                    priceColor = isUp ? 'text-[#6EE7B7]/90' : (isDown ? 'text-[#FDA4AF]/90' : 'text-white/50')
                   } else {
-                    priceColor = isUp ? 'text-rose-400' : (isDown ? 'text-emerald-400' : 'text-slate-300')
+                    priceColor = isUp ? 'text-[#FDA4AF]/90' : (isDown ? 'text-[#6EE7B7]/90' : 'text-white/50')
                   }
                 }
 
@@ -320,14 +323,16 @@ export default function WatchlistModal({
                     key={item.symbol}
                     type="button"
                     onClick={() => handleSelectAndAddStock(item)}
-                    className="w-full text-left px-3.5 py-2.5 hover:bg-slate-800/80 flex items-center justify-between transition-colors group"
+                    className="w-full text-left px-3.5 py-2.5 hover:bg-white/[0.06] flex items-center justify-between transition-colors group"
                   >
                     <div className="flex items-center space-x-2 truncate">
-                      <span className="text-sm">{item.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
-                      <span className="font-mono text-xs font-bold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.07] text-white/50 flex-shrink-0">
+                        {item.market === 'US' ? 'US' : 'TW'}
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-white/80 bg-white/[0.08] px-1.5 py-0.5 rounded">
                         {item.symbol}
                       </span>
-                      <span className="text-xs text-slate-200 font-medium truncate group-hover:text-white">
+                      <span className="text-xs text-white/70 font-medium truncate group-hover:text-white">
                         {item.name}
                       </span>
                     </div>
@@ -336,24 +341,24 @@ export default function WatchlistModal({
                     <div className="flex items-center space-x-2.5 flex-shrink-0 ml-2">
                       {hasPrice ? (
                         <div className="text-right">
-                          <div className="text-xs font-mono font-bold text-white">
+                          <div className="text-xs font-mono font-semibold text-white/90 tabular-nums tracking-tight">
                             {isUS ? `$${reportInfo.close_price}` : `NT$ ${reportInfo.close_price}`}
                           </div>
-                          <div className={`text-[10px] font-mono font-semibold ${priceColor}`}>
+                          <div className={`text-[10px] font-mono font-semibold tabular-nums tracking-tight ${priceColor}`}>
                             {changePct > 0 ? `+${changePct}` : changePct}%
                           </div>
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-500 font-medium">
-                          ⚡ 即時同步
+                        <span className="text-[10px] text-white/30 font-medium">
+                          同步中
                         </span>
                       )}
-                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border transition-all ${
+                      <span className={`text-[11px] font-medium px-2 py-0.5 rounded-lg border transition-all ${
                         isHeld
-                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                          ? 'bg-white/[0.12] text-white/90 border-white/[0.15]'
                           : isAlreadyIn
-                          ? 'bg-slate-800 text-slate-300 border-slate-700'
-                          : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 shadow-sm'
+                          ? 'bg-white/[0.06] text-white/50 border-white/[0.08]'
+                          : 'bg-white/[0.16] hover:bg-white/[0.22] text-white border-white/[0.18]'
                       }`}>
                         {isHeld ? '持倉中' : isAlreadyIn ? '已觀察' : '+ 加入'}
                       </span>
@@ -366,24 +371,26 @@ export default function WatchlistModal({
 
           {/* 若無下拉時，展示目前辨識結果 */}
           {symbolInput.trim() && !isDropdownFocused && detectedStock && (
-            <div className="mt-2 rounded-xl bg-slate-800/60 border border-slate-700/60 px-3 py-2 text-xs flex items-center justify-between">
+            <div className="mt-2 rounded-2xl bg-white/[0.04] border border-white/[0.08] px-3.5 py-2 text-xs flex items-center justify-between">
               <div className="flex items-center space-x-2 truncate">
-                <span className="text-sm">{detectedStock.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.07] text-white/50">
+                  {detectedStock.market === 'US' ? 'US' : 'TW'}
+                </span>
                 <div className="truncate">
-                  <span className="font-bold text-white mr-1.5">{detectedStock.name}</span>
-                  <span className="font-mono text-slate-400 text-[11px] font-semibold">({detectedStock.symbol})</span>
+                  <span className="font-semibold text-white/90 mr-1.5">{detectedStock.name}</span>
+                  <span className="font-mono text-white/45 text-[11px] font-medium">({detectedStock.symbol})</span>
                 </div>
               </div>
-              <span className="text-[10px] text-emerald-400 font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 flex-shrink-0 ml-2">
+              <span className="text-[10px] text-white/60 font-medium px-2 py-0.5 rounded-full bg-white/[0.08] border border-white/[0.10] flex-shrink-0 ml-2">
                 已辨識
               </span>
             </div>
           )}
         </div>
 
-        {/* 頁籤篩選 */}
-        <div className="flex items-center px-5 py-2 bg-slate-900/50 border-b border-slate-800/80 justify-between">
-          <div className="flex space-x-2">
+        {/* 頁籤篩選 (iOS Segmented Control) */}
+        <div className="flex items-center px-5 py-2.5 border-b border-white/[0.07] justify-between flex-shrink-0">
+          <div className="flex p-0.5 bg-white/[0.06] rounded-full space-x-0.5">
             {[
               { id: 'ALL', label: '全部' },
               { id: 'US', label: '美股' },
@@ -392,31 +399,31 @@ export default function WatchlistModal({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${
+                className={`text-xs px-3 py-1 rounded-full font-medium transition-all duration-150 ${
                   activeTab === tab.id
-                    ? 'bg-blue-600 text-white font-semibold'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-white/[0.16] text-white shadow-sm'
+                    : 'text-white/40 hover:text-white/70'
                 }`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-slate-400">
-            共 {filteredWatchlist.length} 檔
+          <span className="text-[11px] text-white/35 tabular-nums">
+            {filteredWatchlist.length} 檔
           </span>
         </div>
 
         {/* 自選股清單列表（含個人持倉勾選與即時報價展示） */}
         <div className="p-5 overflow-y-auto flex-1 space-y-2">
           {loading ? (
-            <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center space-y-2">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-              <span className="text-xs">載入清單中...</span>
+            <div className="py-8 text-center text-white/40 flex flex-col items-center justify-center space-y-2">
+              <Loader2 className="w-5 h-5 animate-spin text-white/30" strokeWidth={1.75} />
+              <span className="text-xs">載入中...</span>
             </div>
           ) : filteredWatchlist.length === 0 ? (
-            <div className="py-8 text-center text-slate-400 text-xs">
-              目前暫無自選個股，輸入代號或公司關鍵字即可一鍵加入！
+            <div className="py-8 text-center text-white/35 text-xs">
+              目前暫無自選股，輸入代號或名稱即可加入
             </div>
           ) : (
             filteredWatchlist.map((item) => {
@@ -428,22 +435,22 @@ export default function WatchlistModal({
               const isUp = changePct > 0
               const isDown = changePct < 0
 
-              let priceColor = 'text-slate-400'
+              let priceColor = 'text-white/40'
               if (hasPrice) {
                 if (isUS) {
-                  priceColor = isUp ? 'text-emerald-400' : (isDown ? 'text-rose-400' : 'text-slate-300')
+                  priceColor = isUp ? 'text-[#6EE7B7]/90' : (isDown ? 'text-[#FDA4AF]/90' : 'text-white/50')
                 } else {
-                  priceColor = isUp ? 'text-rose-400' : (isDown ? 'text-emerald-400' : 'text-slate-300')
+                  priceColor = isUp ? 'text-[#FDA4AF]/90' : (isDown ? 'text-[#6EE7B7]/90' : 'text-white/50')
                 }
               }
 
               return (
                 <div
                   key={item.id}
-                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                  className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all duration-150 ${
                     isHeld
-                      ? 'bg-blue-950/20 border-blue-500/40'
-                      : 'bg-slate-900 border-slate-800/80 hover:border-slate-700'
+                      ? 'bg-white/[0.07] border-white/[0.12]'
+                      : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.05]'
                   }`}
                 >
                   {/* 左側：勾選設為目前成員的持倉 */}
@@ -454,36 +461,36 @@ export default function WatchlistModal({
                     <button
                       type="button"
                       className={`p-1 rounded-lg transition-colors ${
-                        isHeld ? 'text-blue-400' : 'text-slate-600 hover:text-slate-400'
+                        isHeld ? 'text-white/90' : 'text-white/25 hover:text-white/50'
                       }`}
                     >
                       {isHeld ? (
-                        <CheckSquare className="w-4 h-4 text-blue-400" />
+                        <CheckSquare className="w-4 h-4 text-white/90" strokeWidth={1.75} />
                       ) : (
-                        <Square className="w-4 h-4" />
+                        <Square className="w-4 h-4" strokeWidth={1.75} />
                       )}
                     </button>
 
                     <div className="flex items-center space-x-2 truncate">
-                      <span className="text-base flex-shrink-0">
-                        {item.market === 'US' ? '🇺🇸' : '🇹🇼'}
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-white/45 flex-shrink-0">
+                        {item.market === 'US' ? 'US' : 'TW'}
                       </span>
                       <div className="truncate">
-                        <div className="text-xs font-bold text-white flex items-center space-x-1.5 truncate">
+                        <div className="text-xs font-semibold text-white/90 flex items-center space-x-1.5 truncate">
                           <span className="truncate">{item.name}</span>
-                          <span className="text-[11px] font-mono text-slate-400 font-medium flex-shrink-0">
+                          <span className="text-[11px] font-mono text-white/45 font-medium flex-shrink-0">
                             {item.symbol}
                           </span>
                           {item.isOrphaned && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 flex-shrink-0">
-                              報告殘留
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/[0.08] text-white/50 border border-white/[0.10] flex-shrink-0">
+                              歷史資料
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-400 flex items-center space-x-1 mt-0.5">
+                        <div className="text-[10px] text-white/40 flex items-center space-x-1 mt-0.5">
                           <span>{item.market === 'US' ? '美股' : '台股'}</span>
                           {isHeld && (
-                            <span className="text-blue-400 font-medium">· 已入持倉</span>
+                            <span className="text-white/60 font-medium">· 已入持倉</span>
                           )}
                         </div>
                       </div>
@@ -494,10 +501,10 @@ export default function WatchlistModal({
                   <div className="flex items-center space-x-3 flex-shrink-0">
                     {hasPrice && (
                       <div className="text-right">
-                        <div className="text-xs font-mono font-bold text-white">
+                        <div className="text-xs font-mono font-semibold text-white/90 tabular-nums tracking-tight">
                           {isUS ? `$${reportInfo.close_price}` : `NT$ ${reportInfo.close_price}`}
                         </div>
-                        <div className={`text-[10px] font-mono font-semibold ${priceColor}`}>
+                        <div className={`text-[10px] font-mono font-semibold tabular-nums tracking-tight ${priceColor}`}>
                           {changePct > 0 ? `+${changePct}` : changePct}%
                         </div>
                       </div>
@@ -506,10 +513,10 @@ export default function WatchlistModal({
                     <button
                       onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
                       aria-label="刪除"
-                      title="完全刪除（清除自選與分析報告）"
-                      className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-90 transition-all"
+                      title="刪除"
+                      className="p-2 rounded-full text-white/30 hover:text-[#FDA4AF] hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
                     </button>
                   </div>
                 </div>

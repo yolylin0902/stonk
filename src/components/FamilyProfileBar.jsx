@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Users, Plus, UserCheck, X } from 'lucide-react'
+import { Users, Plus, X } from 'lucide-react'
 
 export default function FamilyProfileBar({
   profiles,
@@ -27,17 +27,22 @@ export default function FamilyProfileBar({
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0e1422] p-3 text-slate-100 shadow-md">
-      {/* 簡潔的標題 */}
-      <div className="flex items-center justify-between mb-2 px-0.5">
-        <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
-          <Users className="w-3.5 h-3.5 text-blue-400" />
-          <span>使用者自選持倉切換</span>
+    <div className="ios-glass rounded-[20px] p-3">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2.5 px-0.5">
+        <div className="flex items-center space-x-1.5 text-[12px] text-white/45 font-medium">
+          <Users
+            className="w-3.5 h-3.5"
+            strokeWidth={1.75}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <span>使用者</span>
         </div>
       </div>
 
-      {/* 使用者橫向切換列 */}
-      <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
+      {/* Profile scroll */}
+      <div className="flex items-center space-x-2 overflow-x-auto pb-0.5 scrollbar-none">
         {profiles.map((profile) => {
           const isActive = profile.id === activeProfileId
           const count = profile.holdings ? profile.holdings.length : 0
@@ -45,112 +50,104 @@ export default function FamilyProfileBar({
           return (
             <div
               key={profile.id}
-              className={`flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 rounded-xl border transition-all ${
+              className={`flex-shrink-0 flex items-center space-x-2 px-3 py-1.5 rounded-full border transition-all duration-150 ${
                 isActive
-                  ? 'bg-blue-600/20 border-blue-500/80 shadow-sm'
-                  : 'bg-slate-900/60 border-slate-800 hover:bg-slate-800/60 text-slate-400'
+                  ? 'bg-white/[0.14] border-white/[0.18]'
+                  : 'bg-white/[0.05] border-white/[0.06] hover:bg-white/[0.09]'
               }`}
             >
               <button
                 onClick={() => onSelectProfile(profile.id)}
                 className="flex items-center space-x-2 text-left"
               >
-                <span className="text-base select-none">{profile.avatar || '👤'}</span>
+                <span className="text-[16px] select-none leading-none">{profile.avatar || '👤'}</span>
                 <div>
-                  <div className="flex items-center space-x-1">
-                    <span className={`text-xs font-bold ${isActive ? 'text-white' : 'text-slate-300'}`}>
-                      {profile.name}
-                    </span>
-                    {isActive && <UserCheck className="w-3 h-3 text-blue-400" />}
+                  <div className={`text-[13px] font-semibold leading-tight ${isActive ? 'text-white' : 'text-white/60'}`}>
+                    {profile.name}
                   </div>
-                  <div className="text-[10px] text-slate-400">
-                    {count > 0 ? `${count} 檔持股` : '尚無持股'}
+                  <div className="text-[11px] text-white/30 tabular">
+                    {count > 0 ? `${count} 檔` : '—'}
                   </div>
                 </div>
               </button>
 
-              {/* 若非唯一使用者，可刪除 */}
               {profiles.length > 1 && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    if (confirm(`確定要刪除使用者「${profile.name}」嗎？`)) {
+                    if (confirm(`確定要刪除「${profile.name}」嗎？`)) {
                       onDeleteProfile(profile.id)
                     }
                   }}
-                  className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                  className="p-0.5 text-white/20 hover:text-white/60 transition-colors"
                   title="刪除使用者"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3 h-3" strokeWidth={1.75} />
                 </button>
               )}
             </div>
           )
         })}
 
-        {/* 新增使用者按鈕 */}
+        {/* Add button */}
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex-shrink-0 flex items-center space-x-1 px-3 py-2 rounded-xl border border-dashed border-slate-700 hover:border-slate-500 text-slate-400 hover:text-slate-200 text-xs transition-all"
+          className="flex-shrink-0 flex items-center space-x-1 px-3 py-1.5 rounded-full border border-dashed border-white/[0.14] hover:border-white/25 text-white/35 hover:text-white/60 text-[13px] transition-all"
         >
-          <Plus className="w-3.5 h-3.5" />
-          <span>新增使用者</span>
+          <Plus className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
       </div>
 
-      {/* 新增使用者彈出視窗 */}
+      {/* Add member modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-xs rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-xl space-y-3">
-            <h4 className="text-sm font-bold text-white">新增使用者</h4>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-md ios-fade-in">
+          <div className="w-full max-w-xs ios-glass rounded-[24px] p-5 shadow-2xl space-y-4 mx-4">
+            <h4 className="text-[17px] font-semibold text-white tracking-tight">新增使用者</h4>
             <form onSubmit={handleCreateMember} className="space-y-3">
               <div>
-                <label className="text-xs text-slate-400">名稱</label>
+                <label className="text-[12px] text-white/45 block mb-1.5">名稱</label>
                 <input
                   type="text"
-                  placeholder="例如：小明、老王"
+                  placeholder="小明、老王…"
                   value={newMemberName}
                   onChange={(e) => setNewMemberName(e.target.value)}
-                  className="mt-1 w-full rounded-xl bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                  className="w-full rounded-xl bg-white/[0.07] border border-white/[0.10] px-3.5 py-2.5 text-[14px] text-white placeholder-white/25 focus:outline-none focus:border-white/25 transition-all"
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 block mb-1">
-                  自訂頭像（可用手機或電腦輸入法自由輸入任何 Emoji）
+                <label className="text-[12px] text-white/45 block mb-1.5">
+                  頭像（使用輸入法選表情符號）
                 </label>
                 <div className="flex items-center space-x-3">
-                  <div className="w-12 h-12 rounded-xl border border-blue-500/50 bg-blue-950/30 flex items-center justify-center text-2xl flex-shrink-0">
+                  <div className="w-12 h-12 rounded-2xl border border-white/[0.12] bg-white/[0.06] flex items-center justify-center text-2xl flex-shrink-0">
                     {newMemberAvatar || '❓'}
                   </div>
                   <input
                     type="text"
                     maxLength={4}
-                    placeholder="輸入表情如 🚀"
+                    placeholder="輸入表情"
                     value={newMemberAvatar}
                     onChange={(e) => setNewMemberAvatar(e.target.value)}
-                    className="flex-1 rounded-xl bg-slate-800 border border-slate-700 px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-center font-emoji"
+                    className="flex-1 rounded-xl bg-white/[0.07] border border-white/[0.10] px-3 py-2.5 text-[18px] text-white placeholder-white/25 focus:outline-none focus:border-white/25 text-center"
                   />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  💡 手機點擊輸入框時，可直接切換鍵盤的表情符號鍵選取任何 Emoji。
-                </p>
               </div>
 
-              <div className="flex justify-end space-x-2 pt-2">
+              <div className="flex justify-end space-x-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white"
+                  className="px-4 py-2 rounded-full text-[14px] text-white/50 hover:text-white transition-colors"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white"
+                  className="px-5 py-2 rounded-full bg-white/[0.14] hover:bg-white/[0.20] text-[14px] font-semibold text-white transition-all active:scale-[0.97]"
                 >
-                  確認新增
+                  確認
                 </button>
               </div>
             </form>

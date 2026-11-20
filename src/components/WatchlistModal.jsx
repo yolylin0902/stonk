@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square, Search, ArrowRight, TrendingUp } from 'lucide-react'
+import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square, Search, ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
 
@@ -11,6 +11,7 @@ export default function WatchlistModal({
   onUpdateProfileHoldings
 }) {
   const [watchlist, setWatchlist] = useState([])
+  const [reportsMap, setReportsMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('ALL') // 'ALL', 'US', 'TW'
 
@@ -22,7 +23,7 @@ export default function WatchlistModal({
 
   // 雙向搜尋建議清單 (支援中文/英文關鍵字與股票代號)
   const searchResults = useMemo(() => {
-    return searchStocksTwoWay(symbolInput, 6)
+    return searchStocksTwoWay(symbolInput, 8)
   }, [symbolInput])
 
   // 即時自動辨識之最佳股票
@@ -38,7 +39,7 @@ export default function WatchlistModal({
     }
   }, [isOpen])
 
-  // 讀取自選股清單（同時交叉比對 daily_reports，確保歷史殘留或先前打錯的個股能被看到並清除）
+  // 讀取自選股清單（同時交叉比對 daily_reports，讀取最新股價、漲跌幅與情緒資訊）
   const loadWatchlist = async () => {
     try {
       setLoading(true)
@@ -51,10 +52,18 @@ export default function WatchlistModal({
 
       if (wError) throw wError
 
-      // 2. 撈取 daily_reports 中所有現存的個股代號，以防有歷史殘留或先前打錯的個股
+      // 2. 撈取 daily_reports 中所有現存的個股資訊 (包含價格、漲跌幅、情緒)
       const { data: drData } = await supabase
         .from('daily_reports')
-        .select('symbol, name, market')
+        .select('symbol, name, market, close_price, change_percent, sentiment, headline')
+
+      const rMap = {}
+      if (drData) {
+        for (const dr of drData) {
+          rMap[dr.symbol] = dr
+        }
+      }
+      setReportsMap(rMap)
 
       const existingSymbols = new Set((watchData || []).map((w) => w.symbol))
       const extraFromReports = []
@@ -124,7 +133,7 @@ export default function WatchlistModal({
 
       setFeedback({
         type: 'success',
-        message: `🎉 已自動識別並加入：${cleanName} (${cleanSymbol})！`
+        message: `🎉 已成功加入【${cleanName} (${cleanSymbol})】！即時同步守護程序已啟動，幾秒內即可在儀表板看到完整報告！`
       })
       setSymbolInput('')
       setIsDropdownFocused(false)
@@ -208,7 +217,7 @@ export default function WatchlistModal({
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">支援代號 ⇄ 中英文公司名稱雙向搜尋</p>
+            <p className="text-xs text-slate-400 mt-0.5">搜尋代號或名稱，即時顯示最新行情與資訊</p>
           </div>
           <button
             onClick={onClose}
@@ -243,9 +252,9 @@ export default function WatchlistModal({
             <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
               <span className="flex items-center space-x-1">
                 <Search className="w-3.5 h-3.5 text-blue-400" />
-                <span>雙向搜尋新增標的</span>
+                <span>雙向搜尋股票</span>
               </span>
-              <span className="text-[10px] text-blue-400 font-normal">代號或中英文關鍵字</span>
+              <span className="text-[10px] text-blue-400 font-normal">代號或中英文名稱皆可</span>
             </label>
             
             <div className="flex space-x-2">
@@ -280,21 +289,38 @@ export default function WatchlistModal({
             </div>
           </form>
 
-          {/* 雙向搜尋即時下拉建議選單 */}
+          {/* 雙向搜尋即時下拉建議選單（每檔股票即時展示價格、漲跌幅與持股資訊） */}
           {symbolInput.trim() && isDropdownFocused && searchResults.length > 0 && (
-            <div className="absolute left-4 right-4 top-[82px] z-20 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-800">
-              <div className="px-3 py-1.5 bg-slate-950/80 text-[10px] text-slate-400 font-medium flex justify-between items-center">
-                <span>搜尋建議（點選直接加入）</span>
+            <div className="absolute left-4 right-4 top-[82px] z-20 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-slate-800 max-h-64 overflow-y-auto">
+              <div className="px-3 py-1.5 bg-slate-950/90 text-[10px] text-slate-400 font-medium flex justify-between items-center sticky top-0 z-10">
+                <span>搜尋建議與最新行情</span>
                 <span className="text-blue-400">共 {searchResults.length} 筆</span>
               </div>
               {searchResults.map((item) => {
                 const isAlreadyIn = watchlist.some((w) => w.symbol === item.symbol)
+                const reportInfo = reportsMap[item.symbol]
+                const isHeld = currentProfile?.holdings?.includes(item.symbol)
+                const isUS = item.market === 'US'
+                const hasPrice = reportInfo && reportInfo.close_price != null
+                const changePct = reportInfo?.change_percent
+                const isUp = changePct > 0
+                const isDown = changePct < 0
+
+                let priceColor = 'text-slate-400'
+                if (hasPrice) {
+                  if (isUS) {
+                    priceColor = isUp ? 'text-emerald-400' : (isDown ? 'text-rose-400' : 'text-slate-300')
+                  } else {
+                    priceColor = isUp ? 'text-rose-400' : (isDown ? 'text-emerald-400' : 'text-slate-300')
+                  }
+                }
+
                 return (
                   <button
                     key={item.symbol}
                     type="button"
                     onClick={() => handleSelectAndAddStock(item)}
-                    className="w-full text-left px-3.5 py-2 hover:bg-slate-800/80 flex items-center justify-between transition-colors group"
+                    className="w-full text-left px-3.5 py-2.5 hover:bg-slate-800/80 flex items-center justify-between transition-colors group"
                   >
                     <div className="flex items-center space-x-2 truncate">
                       <span className="text-sm">{item.market === 'US' ? '🇺🇸' : '🇹🇼'}</span>
@@ -305,9 +331,33 @@ export default function WatchlistModal({
                         {item.name}
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-400 group-hover:text-blue-300 font-semibold flex-shrink-0 ml-2">
-                      {isAlreadyIn ? '已追蹤' : '+ 加入'}
-                    </span>
+
+                    {/* 即時股價與持股狀態展示 */}
+                    <div className="flex items-center space-x-2.5 flex-shrink-0 ml-2">
+                      {hasPrice ? (
+                        <div className="text-right">
+                          <div className="text-xs font-mono font-bold text-white">
+                            {isUS ? `$${reportInfo.close_price}` : `NT$ ${reportInfo.close_price}`}
+                          </div>
+                          <div className={`text-[10px] font-mono font-semibold ${priceColor}`}>
+                            {changePct > 0 ? `+${changePct}` : changePct}%
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          ⚡ 即時同步
+                        </span>
+                      )}
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border transition-all ${
+                        isHeld
+                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                          : isAlreadyIn
+                          ? 'bg-slate-800 text-slate-300 border-slate-700'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 shadow-sm'
+                      }`}>
+                        {isHeld ? '持倉中' : isAlreadyIn ? '已觀察' : '+ 加入'}
+                      </span>
+                    </div>
                   </button>
                 )
               })}
@@ -357,7 +407,7 @@ export default function WatchlistModal({
           </span>
         </div>
 
-        {/* 自選股清單列表（含個人持倉勾選） */}
+        {/* 自選股清單列表（含個人持倉勾選與即時報價展示） */}
         <div className="p-5 overflow-y-auto flex-1 space-y-2">
           {loading ? (
             <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center space-y-2">
@@ -371,6 +421,22 @@ export default function WatchlistModal({
           ) : (
             filteredWatchlist.map((item) => {
               const isHeld = currentProfile?.holdings?.includes(item.symbol)
+              const reportInfo = reportsMap[item.symbol]
+              const isUS = item.market === 'US'
+              const hasPrice = reportInfo && reportInfo.close_price != null
+              const changePct = reportInfo?.change_percent
+              const isUp = changePct > 0
+              const isDown = changePct < 0
+
+              let priceColor = 'text-slate-400'
+              if (hasPrice) {
+                if (isUS) {
+                  priceColor = isUp ? 'text-emerald-400' : (isDown ? 'text-rose-400' : 'text-slate-300')
+                } else {
+                  priceColor = isUp ? 'text-rose-400' : (isDown ? 'text-emerald-400' : 'text-slate-300')
+                }
+              }
+
               return (
                 <div
                   key={item.id}
@@ -383,7 +449,7 @@ export default function WatchlistModal({
                   {/* 左側：勾選設為目前成員的持倉 */}
                   <div
                     onClick={() => toggleMemberHolding(item.symbol)}
-                    className="flex items-center space-x-3 cursor-pointer flex-1 select-none"
+                    className="flex items-center space-x-3 cursor-pointer flex-1 select-none truncate mr-2"
                   >
                     <button
                       type="button"
@@ -398,23 +464,23 @@ export default function WatchlistModal({
                       )}
                     </button>
 
-                    <div className="flex items-center space-x-2">
-                      <span className="text-base">
+                    <div className="flex items-center space-x-2 truncate">
+                      <span className="text-base flex-shrink-0">
                         {item.market === 'US' ? '🇺🇸' : '🇹🇼'}
                       </span>
-                      <div>
-                        <div className="text-xs font-bold text-white flex items-center space-x-1.5">
-                          <span>{item.name}</span>
-                          <span className="text-[11px] font-mono text-slate-400 font-medium">
+                      <div className="truncate">
+                        <div className="text-xs font-bold text-white flex items-center space-x-1.5 truncate">
+                          <span className="truncate">{item.name}</span>
+                          <span className="text-[11px] font-mono text-slate-400 font-medium flex-shrink-0">
                             {item.symbol}
                           </span>
                           {item.isOrphaned && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 flex-shrink-0">
                               報告殘留
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-400 flex items-center space-x-1">
+                        <div className="text-[10px] text-slate-400 flex items-center space-x-1 mt-0.5">
                           <span>{item.market === 'US' ? '美股' : '台股'}</span>
                           {isHeld && (
                             <span className="text-blue-400 font-medium">· 已入持倉</span>
@@ -424,15 +490,28 @@ export default function WatchlistModal({
                     </div>
                   </div>
 
-                  {/* 右側刪除按鈕 */}
-                  <button
-                    onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
-                    aria-label="刪除"
-                    title="完全刪除（清除自選與分析報告）"
-                    className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-90 transition-all ml-2"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {/* 右側：即時報價展示與刪除按鈕 */}
+                  <div className="flex items-center space-x-3 flex-shrink-0">
+                    {hasPrice && (
+                      <div className="text-right">
+                        <div className="text-xs font-mono font-bold text-white">
+                          {isUS ? `$${reportInfo.close_price}` : `NT$ ${reportInfo.close_price}`}
+                        </div>
+                        <div className={`text-[10px] font-mono font-semibold ${priceColor}`}>
+                          {changePct > 0 ? `+${changePct}` : changePct}%
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
+                      aria-label="刪除"
+                      title="完全刪除（清除自選與分析報告）"
+                      className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-90 transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               )
             })

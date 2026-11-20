@@ -373,16 +373,27 @@ JSON 格式範例：
             logger.warning(f"⚠️ Gemini 模型 ({current_model}) 呼叫失敗: {e}，嘗試備用方案...")
 
     logger.error(f"❌ Gemini AI 分析 {symbol} 最終失敗: {last_error}")
-    # Fallback 規則生成
-    sentiment = "利多" if change_percent > 1.0 else ("利空" if change_percent < -1.0 else "中性")
-    return {
-        "sentiment": sentiment,
-        "headline": f"{name} 今日{trend_str}，收在 {close_price}",
-        "story_bullets": [
+    # Fallback 智慧規則生成（若有新聞，直接萃取最新新聞作為快訊與重點）
+    sentiment = "利多" if change_percent > 0.5 else ("利空" if change_percent < -0.5 else "中性")
+    trend_str = f"上漲 {change_percent}%" if change_percent > 0 else (f"下跌 {abs(change_percent)}%" if change_percent < 0 else "平盤 0.0%")
+    
+    if news_list and len(news_list) > 0:
+        headline = news_list[0]["title"][:28]
+        story_bullets = [n["title"] for n in news_list[:3]]
+        while len(story_bullets) < 3:
+            story_bullets.append(f"{name} 今日{trend_str}，收盤價報 {close_price}。")
+    else:
+        headline = f"{name} 今日{trend_str}，收在 {close_price}"
+        story_bullets = [
             f"{name} ({symbol}) 當日收盤報 {close_price}，漲跌幅 {change_percent}%。",
             "當前主要受總體市場盤勢波動及相關族群輪動影響。",
-            "投資人宜持續追蹤後續即時新聞與基本面發展。",
-        ],
+            "建議持續追蹤後續即時新聞與技術線型支撐壓力。",
+        ]
+
+    return {
+        "sentiment": sentiment,
+        "headline": headline,
+        "story_bullets": story_bullets[:3],
     }
 
 

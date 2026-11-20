@@ -164,11 +164,11 @@ export default function App() {
           close_price: null,
           change_percent: null,
           sentiment: '中性',
-          headline: '已加入追蹤，等待今日收盤排程自動分析',
+          headline: '⚡ AI 即時分析中，正在抓取最新盤勢與新聞...',
           story_bullets: [
-            '已成功納入系統追蹤清單。',
-            '收盤後將自動由 AI 彙整最新新聞並產出漲跌故事。',
-            '可隨時點擊右上角自選股管理持倉。'
+            '已成功將此標的加入自選追蹤，後端同步守護程序已自動響應。',
+            '正在透過金融數據源抓取最新交易日價格與漲跌幅。',
+            'Gemini AI 正在爬梳即時新聞並歸納關鍵驅動原因，完成後自動呈現。'
           ],
           news_links: [],
           isPending: true
@@ -247,6 +247,18 @@ export default function App() {
     }
     init()
   }, [loadAvailableDates, loadReports, loadMarketCounts])
+
+  // 若目前畫面上有尚未分析完成的新自選股，自動短暫輪詢以實現即時「幾秒內自動更新」體驗
+  useEffect(() => {
+    const hasPending = reports.some((r) => r.isPending)
+    if (!hasPending) return
+
+    const timer = setInterval(() => {
+      loadReports(market, selectedDate)
+    }, 4000)
+
+    return () => clearInterval(timer)
+  }, [reports, market, selectedDate, loadReports])
 
   // 根據使用者持倉過濾顯示的報告清單
   const displayedReports = useMemo(() => {

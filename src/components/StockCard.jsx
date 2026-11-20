@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, ExternalLink, Newspaper } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, ExternalLink, Newspaper, Loader2, Sparkles } from 'lucide-react'
 
 export default function StockCard({ report }) {
   const [isNewsExpanded, setIsNewsExpanded] = useState(false)
@@ -112,8 +112,9 @@ export default function StockCard({ report }) {
                 </span>
               </span>
             ) : (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border border-blue-500/30 bg-blue-500/10 text-blue-400">
-                待收盤分析
+              <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border border-blue-500/40 bg-blue-500/15 text-blue-300 animate-pulse">
+                <Loader2 className="w-3 h-3 animate-spin text-blue-400" />
+                <span>AI 即時分析中</span>
               </span>
             )}
           </div>

@@ -1,17 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   MapPin,
   Navigation,
-  Compass,
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Sparkles,
-  Info,
-  DollarSign,
-  Package,
-  Wind,
-  ShieldCheck,
   RefreshCw
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
@@ -25,8 +18,7 @@ const PARKS_DATABASE = [
     lat: 25.0300,
     lng: 121.5358,
     vibe: '👑 公園界信義區 / 外資大佬聚集地',
-    spots: 'VIP露天長椅 (85%滿)、溜滑梯底部 (客滿)',
-    cardboard: '雙層瓦楞冷氣外箱 (防風 A / 保暖 B+)'
+    spots: 'VIP露天長椅 (85%滿)、溜滑梯底部 (客滿)'
   },
   {
     id: 'taipei_228',
@@ -35,8 +27,7 @@ const PARKS_DATABASE = [
     lat: 25.0416,
     lng: 121.5152,
     vibe: '🏛️ 歷史悠久 / 近台北車站與證交所',
-    spots: '中式涼亭 (75%滿)、噴水池外圍石椅 (空位多)',
-    cardboard: '厚紙箱+雨衣包覆 (防風 A+ / 視野開闊)'
+    spots: '中式涼亭 (75%滿)、噴水池外圍石椅 (空位多)'
   },
   {
     id: 'banciao',
@@ -45,8 +36,7 @@ const PARKS_DATABASE = [
     lat: 25.0142,
     lng: 121.4633,
     vibe: '🚆 三鐵共構旁 / 逃難交通極便利',
-    spots: '草坪木棧道 (40%滿)、溜冰場旁長凳 (60%滿)',
-    cardboard: '雙人加厚電視盒 (保暖佳 / 易折疊)'
+    spots: '草坪木棧道 (40%滿)、溜冰場旁長凳 (60%滿)'
   },
   {
     id: 'hsinchu_lake',
@@ -55,8 +45,7 @@ const PARKS_DATABASE = [
     lat: 24.7797,
     lng: 121.0186,
     vibe: '💻 科技園區重災區 / 滿座工程師',
-    spots: '九曲橋中段涼亭 (95%爆滿)、湖畔長椅 (50%滿)',
-    cardboard: '半導體防靜電耐衝擊木箱 (抗9級強風)'
+    spots: '九曲橋中段涼亭 (95%爆滿)、湖畔長椅 (50%滿)'
   },
   {
     id: 'taichung_central',
@@ -65,8 +54,7 @@ const PARKS_DATABASE = [
     lat: 24.1866,
     lng: 120.6534,
     vibe: '🌾 遼闊無邊 / 風大注意紙箱吹走',
-    spots: '遊客中心遮雨棚 (60%滿)、抹茶湖平台 (大空位)',
-    cardboard: '超大冰箱木架瓦楞紙 (抗風 A+ / 視野佳)'
+    spots: '遊客中心遮雨棚 (60%滿)、抹茶湖平台 (大空位)'
   },
   {
     id: 'tainan_park',
@@ -75,8 +63,7 @@ const PARKS_DATABASE = [
     lat: 23.0031,
     lng: 120.2132,
     vibe: '🌴 悠閒慢活 / 蚊子稍微熱情',
-    spots: '燕潭念慈亭 (80%滿)、百年老樹蔭下石桌 (空位多)',
-    cardboard: '透氣型水果瓦楞箱 (散熱快 / 需自備蚊香)'
+    spots: '燕潭念慈亭 (80%滿)、百年老樹蔭下石桌 (空位多)'
   },
   {
     id: 'kaohsiung_weiwuying',
@@ -85,8 +72,7 @@ const PARKS_DATABASE = [
     lat: 22.6219,
     lng: 120.3421,
     vibe: '🎭 藝文氣息避難所 / 寬敞有風',
-    spots: '音悅榕樹廣場 (35%滿)、北湖賞鳥木亭 (80%滿)',
-    cardboard: '薄型輕量折疊箱 (通風優良 / 附遮陽)'
+    spots: '音悅榕樹廣場 (35%滿)、北湖賞鳥木亭 (80%滿)'
   }
 ]
 
@@ -115,20 +101,9 @@ const MEME_QUOTES = [
 
 export default function ParkSleepSection() {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [lossAmount, setLossAmount] = useState(150000)
-  const [dailyBudget, setDailyBudget] = useState(500)
-  const [housingCost, setHousingCost] = useState(15000)
   const [userLocation, setUserLocation] = useState(null)
   const [locationStatus, setLocationStatus] = useState('idle') // 'idle', 'locating', 'success', 'denied'
   const [randomQuote, setRandomQuote] = useState(MEME_QUOTES[0])
-
-  // 計算睡公園天數
-  const calculatedDays = useMemo(() => {
-    const dailyRent = housingCost / 30
-    const totalDailyCost = dailyRent + dailyBudget
-    if (totalDailyCost <= 0) return 0
-    return Math.max(0, Math.round(lossAmount / totalDailyCost))
-  }, [lossAmount, dailyBudget, housingCost])
 
   // 根據 GPS 取得公園距離排序清單
   const parksWithDistance = useMemo(() => {
@@ -182,7 +157,7 @@ export default function ParkSleepSection() {
 
   const triggerCheer = () => {
     confetti({
-      particleCount: 40,
+      particleCount: 35,
       spread: 60,
       origin: { y: 0.8 }
     })
@@ -191,29 +166,24 @@ export default function ParkSleepSection() {
   }
 
   return (
-    <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-[#0c131d] to-[#080d16] p-4 text-slate-100 shadow-lg shadow-emerald-950/20 transition-all">
-      {/* 標題列折疊開關 */}
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3.5 text-slate-100 transition-all">
+      {/* 簡潔乾淨的標題列 */}
       <div
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex cursor-pointer items-center justify-between select-none"
       >
         <div className="flex items-center space-x-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
-            <Compass className="h-4 w-4" />
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-800 text-slate-300">
+            <MapPin className="h-4 w-4" />
           </div>
           <div>
-            <div className="flex items-center space-x-1.5">
-              <span className="text-xs font-bold text-slate-200">
-                避難專區：睡公園倒數 & 附近佔位雷達
-              </span>
-              <span className="rounded bg-emerald-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-400 border border-emerald-500/30">
-                趣味彩蛋
-              </span>
-            </div>
+            <span className="text-xs font-semibold text-slate-200">
+              附近避難公園雷達
+            </span>
             <p className="text-[11px] text-slate-400">
               {userLocation && nearestPark?.distance
-                ? `距離最近避難點「${nearestPark.name.split('・')[1]}」約 ${formatDistance(nearestPark.distance)}`
-                : '換算流落街頭天數 · 推薦附近可睡長椅'}
+                ? `最近點：${nearestPark.name.split('・')[1]} (${formatDistance(nearestPark.distance)})`
+                : '查詢離你最近的公園長椅距離'}
             </p>
           </div>
         </div>
@@ -229,110 +199,71 @@ export default function ParkSleepSection() {
 
       {/* 展開後的內容 */}
       {isExpanded && (
-        <div className="mt-4 space-y-4 pt-3 border-t border-slate-800/80 animate-fade-in">
-          {/* 1. 核心倒數展示 */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3.5 text-center">
-            <span className="text-[11px] text-slate-400">當前損益換算流落街頭倒數</span>
-            <div className="my-1.5 text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">
-              {calculatedDays.toLocaleString()}{' '}
-              <span className="text-lg font-bold text-slate-400">天</span>
-            </div>
-
-            <div className="flex items-center justify-center space-x-2 text-[11px] text-slate-400">
-              <span>累計虧損 -${Number(lossAmount).toLocaleString()}</span>
-              <span>·</span>
-              <span>日預算 ${dailyBudget}</span>
-            </div>
-
-            {/* 快速微調滑桿 */}
-            <div className="mt-3 space-y-2 text-left text-[11px] text-slate-400">
-              <div className="flex justify-between">
-                <span>虧損設定 (NTD)</span>
-                <span className="font-mono text-rose-400">-${Number(lossAmount).toLocaleString()}</span>
-              </div>
-              <input
-                type="range"
-                min="5000"
-                max="1000000"
-                step="5000"
-                value={lossAmount}
-                onChange={(e) => setLossAmount(Number(e.target.value))}
-                className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-emerald-500"
-              />
-            </div>
-          </div>
-
-          {/* 2. 獲取所在位置 & 推薦附近公園 */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
-                <Navigation className="h-3.5 w-3.5 text-emerald-400" />
-                <span>附近推薦避難公園 (看看就好)</span>
-              </div>
-
-              {!userLocation ? (
-                <button
-                  onClick={requestLocation}
-                  disabled={locationStatus === 'locating'}
-                  className="flex items-center space-x-1 rounded-lg bg-emerald-500/20 px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/30 active:scale-95 transition-all border border-emerald-500/30"
-                >
-                  <MapPin className="h-3 w-3" />
-                  <span>{locationStatus === 'locating' ? '正在定位...' : '存取目前位置'}</span>
-                </button>
-              ) : (
-                <button
-                  onClick={requestLocation}
-                  className="flex items-center space-x-1 text-[11px] text-slate-400 hover:text-slate-200"
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  <span>更新位置</span>
-                </button>
-              )}
-            </div>
-
-            {locationStatus === 'denied' && (
-              <p className="text-[11px] text-amber-400/90 leading-tight">
-                ⚠️ 未取得定位權限（展示全台預設公園，不影響純算天數）
-              </p>
+        <div className="mt-3 space-y-3 pt-3 border-t border-slate-800 animate-fade-in">
+          {/* 定位按鈕與狀態列 */}
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-[11px] text-slate-400">推薦避難長椅（僅供參考）</span>
+            {!userLocation ? (
+              <button
+                onClick={requestLocation}
+                disabled={locationStatus === 'locating'}
+                className="flex items-center space-x-1 rounded-lg bg-blue-600/20 px-2.5 py-1 text-[11px] font-medium text-blue-400 hover:bg-blue-600/30 active:scale-95 transition-all border border-blue-500/30"
+              >
+                <Navigation className="h-3 w-3" />
+                <span>{locationStatus === 'locating' ? '定位中...' : '取得我的位置'}</span>
+              </button>
+            ) : (
+              <button
+                onClick={requestLocation}
+                className="flex items-center space-x-1 text-[11px] text-slate-400 hover:text-slate-200"
+              >
+                <RefreshCw className="h-3 w-3" />
+                <span>更新位置</span>
+              </button>
             )}
-
-            {/* 推薦點列表 */}
-            <div className="space-y-2 pt-1">
-              {parksWithDistance.slice(0, 3).map((park) => (
-                <div
-                  key={park.id}
-                  className="rounded-lg bg-slate-800/40 border border-slate-800/80 p-2.5 text-xs transition-all hover:border-slate-700"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-white">{park.name}</span>
-                    {park.distance !== null ? (
-                      <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[11px] font-bold text-emerald-400 border border-emerald-500/20">
-                        約 {formatDistance(park.distance)}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-slate-400 font-mono">{park.city}</span>
-                    )}
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 mt-1">{park.vibe}</p>
-                  
-                  <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-800/60 pt-1.5">
-                    <span>長椅狀況: <strong className="text-slate-300">{park.spots}</strong></span>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
 
-          {/* 3. 韭菜金句心靈撫慰 */}
+          {locationStatus === 'denied' && (
+            <p className="text-[11px] text-slate-400 leading-tight">
+              未授權定位，已顯示熱門推薦避難點。
+            </p>
+          )}
+
+          {/* 推薦公園列表 */}
+          <div className="space-y-2">
+            {parksWithDistance.slice(0, 3).map((park) => (
+              <div
+                key={park.id}
+                className="rounded-xl bg-slate-800/40 border border-slate-800/80 p-2.5 text-xs transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-200">{park.name}</span>
+                  {park.distance !== null ? (
+                    <span className="rounded bg-blue-500/10 px-2 py-0.5 font-mono text-[11px] font-semibold text-blue-400 border border-blue-500/20">
+                      約 {formatDistance(park.distance)}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-slate-400 font-mono">{park.city}</span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-400 mt-1">{park.vibe}</p>
+                
+                <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-800/50 pt-1.5">
+                  <span>長椅況：<strong className="text-slate-300 font-normal">{park.spots}</strong></span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 韭菜金句心靈撫慰 */}
           <div
             onClick={triggerCheer}
-            className="cursor-pointer rounded-xl border border-emerald-900/40 bg-emerald-950/20 p-2.5 text-[11px] text-emerald-300 hover:border-emerald-700/50 transition-all flex items-start space-x-2 active:scale-[0.99]"
+            className="cursor-pointer rounded-xl border border-slate-800 bg-slate-800/30 p-2.5 text-[11px] text-slate-300 hover:bg-slate-800/50 transition-all flex items-start space-x-2 active:scale-[0.99]"
           >
-            <Sparkles className="h-4 w-4 flex-shrink-0 text-emerald-400 mt-0.5" />
+            <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-amber-400 mt-0.5" />
             <div className="flex-1">
-              <span className="font-semibold text-emerald-400">韭菜互助金句（點擊換句）:</span>
-              <p className="text-slate-300 mt-0.5 italic">{randomQuote}</p>
+              <p className="text-slate-300 italic">{randomQuote}</p>
             </div>
           </div>
         </div>

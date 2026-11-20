@@ -43,12 +43,22 @@ export default function App() {
     setActiveProfileId(id)
   }
 
-  // 新增家庭成員
+  // 新增使用者
   const handleAddProfile = (newProfile) => {
     const updated = [...profiles, newProfile]
     setProfiles(updated)
     saveStoredProfiles(updated)
     handleSelectProfile(newProfile.id)
+  }
+
+  // 刪除使用者
+  const handleDeleteProfile = (id) => {
+    const updated = profiles.filter((p) => p.id !== id)
+    setProfiles(updated)
+    saveStoredProfiles(updated)
+    if (activeProfileId === id && updated.length > 0) {
+      handleSelectProfile(updated[0].id)
+    }
   }
 
   // 更新當前成員的持股清單
@@ -210,13 +220,13 @@ export default function App() {
 
       {/* 主內容區塊 - Mobile-First 容器 */}
       <main className="flex-1 max-w-md w-full mx-auto px-4 py-4 space-y-4">
-        {/* Netflix 家庭方案切換欄位 */}
+        {/* 使用者模式切換欄位 */}
         <FamilyProfileBar
           profiles={profiles}
           activeProfileId={activeProfileId}
           onSelectProfile={handleSelectProfile}
           onAddProfile={handleAddProfile}
-          reports={allDateReports}
+          onDeleteProfile={handleDeleteProfile}
         />
 
         {/* 市場頁籤切換 (美股盤後 / 台股盤後) */}
@@ -236,7 +246,7 @@ export default function App() {
             />
           )}
 
-          {/* 偷看持倉專用開關 */}
+          {/* 使用者持倉過濾開關 */}
           <div className="flex items-center justify-between px-1 text-xs">
             <span className="text-slate-400">
               顯示標的：

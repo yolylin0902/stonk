@@ -1,0 +1,86 @@
+name: Daily Stock Story Automation
+
+on:
+  # 手動按鈕觸發（方便在 GitHub 介面一鍵測試執行）
+  workflow_dispatch:
+    inputs:
+      market:
+        description: '指定執行市場 (US: 美股, TW: 台股, ALL: 全部)'
+        required: true
+        default: 'ALL'
+        type: choice
+        options:
+          - ALL
+          - US
+          - TW
+      limit:
+        description: '限制處理股票檔數（測試用，留空代表跑全部）'
+        required: false
+        default: ''
+
+  # 定時觸發排程（時間均為 UTC）
+  schedule:
+    # 1. 美股收盤後：UTC 21:35 (台灣時間週二至週六 05:35)
+    - cron: '35 21 * * 1-5'
+    # 2. 台股收盤後：UTC 06:05 (台灣時間週一至週五 14:05)
+    - cron: '5 6 * * 1-5'
+
+jobs:
+  run-crawler:
+    name: Fetch Stock Data & AI Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'scripts/requirements.txt'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+
+      - name: Determine Market Execution
+        id: select-market
+        run: |
+          LIMIT_FLAG=""
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            LIMIT_FLAG="--limit ${{ github.event.inputs.limit }}"
+          fi
+
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ "${{ github.event.schedule }}" = "35 21 * * 1-5" ]; then
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US" >> $GITHUB_ENV
+            elif [ "${{ github.event.schedule }}" = "5 6 * * 1-5" ]; then
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW" >> $GITHUB_ENV
+            fi
+          else
+            # workflow_dispatch 手動觸發
+            SELECTED_MARKET="${{ github.event.inputs.market }}"
+            if [ "$SELECTED_MARKET" = "US" ]; then
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US $LIMIT_FLAG" >> $GITHUB_ENV
+            elif [ "$SELECTED_MARKET" = "TW" ]; then
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW $LIMIT_FLAG" >> $GITHUB_ENV
+            else
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py $LIMIT_FLAG" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: Execute Stock Crawler & Gemini AI Analysis
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || 'gemini-3.5-flash' }}
+        run: |
+          echo "🚀 正在執行命令: $EXEC_CMD"
+          $EXEC_CMD

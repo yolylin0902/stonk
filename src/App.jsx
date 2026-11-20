@@ -14,7 +14,7 @@ import {
   setActiveProfileId
 } from './lib/profileManager'
 import { supabase } from './lib/supabase'
-import { Loader2, AlertCircle, Eye, EyeOff, BarChart3, Layers, Plus } from 'lucide-react'
+import { Loader2, AlertCircle, BarChart3, Layers, Plus } from 'lucide-react'
 
 // 判斷是否為市場指數或核心 ETF (放在指數區)
 export const isMarketIndex = (symbol) => {
@@ -42,7 +42,7 @@ export default function App() {
   // 使用者狀態管理 (持久化於 localStorage)
   const [profiles, setProfiles] = useState(() => getStoredProfiles())
   const [activeProfileId, setActiveProfile] = useState(() => getActiveProfileId())
-  const [filterOnlyHoldings, setFilterOnlyHoldings] = useState(false)
+  const [cardViewMode, setCardViewMode] = useState('STOCKS') // 'STOCKS' (自選個股) 或 'INDEX' (主要指數)
 
   const currentProfile = useMemo(() => {
     return profiles.find((p) => p.id === activeProfileId) || profiles[0]
@@ -260,21 +260,14 @@ export default function App() {
     return () => clearInterval(timer)
   }, [reports, market, selectedDate, loadReports])
 
-  // 根據使用者持倉過濾顯示的報告清單
-  const displayedReports = useMemo(() => {
-    if (!filterOnlyHoldings) return reports
-    const memberHoldings = currentProfile?.holdings || []
-    return reports.filter((r) => memberHoldings.includes(r.symbol))
-  }, [reports, filterOnlyHoldings, currentProfile])
-
   // 分離出「指數區」與「自選個股區」
   const indexReports = useMemo(() => {
-    return displayedReports.filter((r) => isMarketIndex(r.symbol))
-  }, [displayedReports])
+    return reports.filter((r) => isMarketIndex(r.symbol))
+  }, [reports])
 
   const userStockReports = useMemo(() => {
-    return displayedReports.filter((r) => !isMarketIndex(r.symbol))
-  }, [displayedReports])
+    return reports.filter((r) => !isMarketIndex(r.symbol))
+  }, [reports])
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white">
@@ -313,36 +306,45 @@ export default function App() {
             />
           )}
 
-          {/* 使用者持倉過濾開關 */}
+          {/* 切換主要指數與自選個股字卡 */}
           <div className="flex items-center justify-between px-1 text-xs">
             <span className="text-slate-400">
-              顯示標的：
-              <span className="text-white font-medium">
-                {filterOnlyHoldings
-                  ? `只看 ${currentProfile.name} 的自選 (${currentProfile.holdings?.length || 0}檔)`
-                  : '全部市場報告'}
+              字卡模式：
+              <span className="text-white font-bold ml-1">
+                {cardViewMode === 'INDEX'
+                  ? (market === 'US' ? '美股主要指數' : '台股主要指數/ETF')
+                  : '自選個股'}
               </span>
             </span>
-            <button
-              onClick={() => setFilterOnlyHoldings(!filterOnlyHoldings)}
-              className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                filterOnlyHoldings
-                  ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 shadow-sm'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {filterOnlyHoldings ? (
-                <>
-                  <Eye className="w-3 h-3 text-blue-400" />
-                  <span>顯示全部</span>
-                </>
-              ) : (
-                <>
-                  <EyeOff className="w-3 h-3 text-slate-400" />
-                  <span>只看此人持股</span>
-                </>
-              )}
-            </button>
+
+            <div className="flex items-center p-0.5 bg-slate-900 border border-slate-800 rounded-xl shadow-inner">
+              <button
+                type="button"
+                onClick={() => setCardViewMode('INDEX')}
+                className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  cardViewMode === 'INDEX'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>主要指數</span>
+                <span className="text-[10px] opacity-80 font-mono">({indexReports.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCardViewMode('STOCKS')}
+                className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  cardViewMode === 'STOCKS'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>自選個股</span>
+                <span className="text-[10px] opacity-80 font-mono">({userStockReports.length})</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -365,7 +367,7 @@ export default function App() {
               正在獲取 {market === 'US' ? '美股' : '台股'} 最新收盤走勢...
             </span>
           </div>
-        ) : displayedReports.length === 0 ? (
+        ) : reports.length === 0 ? (
           <EmptyState
             market={market}
             selectedDate={selectedDate}
@@ -373,62 +375,68 @@ export default function App() {
           />
         ) : (
           <div className="space-y-5 pb-8">
-            {/* 1. 市場指數區 (四大指數 / 核心 ETF) */}
-            {indexReports.length > 0 && (
+            {/* 1. 市場指數區 (四大指數 / 核心 ETF) - 僅在 cardViewMode === 'INDEX' 時顯示 */}
+            {cardViewMode === 'INDEX' && (
               <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
                     <BarChart3 className="w-4 h-4 text-blue-400" />
                     <span>{market === 'US' ? '美股四大指數區' : '台股指數與市場 ETF'}</span>
                   </div>
-                  <span className="text-[10px] text-slate-400 font-mono">大盤基準</span>
+                  <span className="text-[10px] text-slate-400 font-mono">大盤基準 ({indexReports.length})</span>
                 </div>
-                <div className="space-y-3">
-                  {indexReports.map((report) => (
-                    <StockCard key={report.id || report.symbol} report={report} />
-                  ))}
-                </div>
+                {indexReports.length === 0 ? (
+                  <div className="p-8 rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 text-center space-y-2">
+                    <p className="text-xs text-slate-400">目前尚無指數數據</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {indexReports.map((report) => (
+                      <StockCard key={report.id || report.symbol} report={report} />
+                    ))}
+                  </div>
+                )}
               </section>
             )}
 
-            {/* 2. 自選個股區 (使用者自由新增) */}
-            <section className="space-y-3 pt-1">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
-                  <Layers className="w-4 h-4 text-emerald-400" />
-                  <span>自選個股區 ({userStockReports.length})</span>
-                </div>
-                <button
-                  onClick={() => setIsWatchlistModalOpen(true)}
-                  className="flex items-center space-x-1 text-[11px] text-blue-400 hover:text-blue-300 font-medium"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>新增自選股</span>
-                </button>
-              </div>
-
-              {userStockReports.length === 0 ? (
-                <div className="p-6 rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 text-center space-y-2.5">
-                  <p className="text-xs text-slate-400">
-                    {filterOnlyHoldings
-                      ? `${currentProfile.name} 尚未新增此市場的自選個股`
-                      : '目前尚無自選個股，留給使用者自由新增！'}
-                  </p>
+            {/* 2. 自選個股區 (使用者自由新增) - 僅在 cardViewMode === 'STOCKS' 時顯示 */}
+            {cardViewMode === 'STOCKS' && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
+                    <Layers className="w-4 h-4 text-emerald-400" />
+                    <span>自選個股區 ({userStockReports.length})</span>
+                  </div>
                   <button
                     onClick={() => setIsWatchlistModalOpen(true)}
-                    className="px-3.5 py-1.5 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-semibold hover:bg-blue-600/30 active:scale-95 transition-all"
+                    className="flex items-center space-x-1 text-[11px] text-blue-400 hover:text-blue-300 font-medium"
                   >
-                    + 新增自選個股 (例如 SMCI, NVDA)
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>新增自選股</span>
                   </button>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {userStockReports.map((report) => (
-                    <StockCard key={report.id || report.symbol} report={report} />
-                  ))}
-                </div>
-              )}
-            </section>
+
+                {userStockReports.length === 0 ? (
+                  <div className="p-8 rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 text-center space-y-3">
+                    <p className="text-xs text-slate-400">
+                      目前尚無自選個股，留給使用者自由新增！
+                    </p>
+                    <button
+                      onClick={() => setIsWatchlistModalOpen(true)}
+                      className="px-4 py-2 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-semibold hover:bg-blue-600/30 active:scale-95 transition-all"
+                    >
+                      + 新增自選個股 (例如 SMCI, NVDA)
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {userStockReports.map((report) => (
+                      <StockCard key={report.id || report.symbol} report={report} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
           </div>
         )}
       </main>

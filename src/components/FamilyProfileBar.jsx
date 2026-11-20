@@ -18,10 +18,11 @@ export default function FamilyProfileBar({
     onAddProfile({
       id: 'user_' + Date.now(),
       name: newMemberName.trim(),
-      avatar: newMemberAvatar,
+      avatar: newMemberAvatar.trim() || '😎',
       holdings: []
     })
     setNewMemberName('')
+    setNewMemberAvatar('😎')
     setShowAddModal(false)
   }
 
@@ -31,7 +32,7 @@ export default function FamilyProfileBar({
       <div className="flex items-center justify-between mb-2 px-0.5">
         <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-300">
           <Users className="w-3.5 h-3.5 text-blue-400" />
-          <span>切換使用者</span>
+          <span>使用者自選持倉切換</span>
         </div>
       </div>
 
@@ -54,7 +55,7 @@ export default function FamilyProfileBar({
                 onClick={() => onSelectProfile(profile.id)}
                 className="flex items-center space-x-2 text-left"
               >
-                <span className="text-base">{profile.avatar || '👤'}</span>
+                <span className="text-base select-none">{profile.avatar || '👤'}</span>
                 <div>
                   <div className="flex items-center space-x-1">
                     <span className={`text-xs font-bold ${isActive ? 'text-white' : 'text-slate-300'}`}>
@@ -63,7 +64,7 @@ export default function FamilyProfileBar({
                     {isActive && <UserCheck className="w-3 h-3 text-blue-400" />}
                   </div>
                   <div className="text-[10px] text-slate-400">
-                    {count > 0 ? `${count} 檔自選` : '尚無持股'}
+                    {count > 0 ? `${count} 檔持股` : '尚無持股'}
                   </div>
                 </div>
               </button>
@@ -107,7 +108,7 @@ export default function FamilyProfileBar({
                 <label className="text-xs text-slate-400">名稱</label>
                 <input
                   type="text"
-                  placeholder="例如：小明、工作帳號"
+                  placeholder="例如：小明、老王"
                   value={newMemberName}
                   onChange={(e) => setNewMemberName(e.target.value)}
                   className="mt-1 w-full rounded-xl bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
@@ -116,21 +117,25 @@ export default function FamilyProfileBar({
               </div>
 
               <div>
-                <label className="text-xs text-slate-400">選擇頭像</label>
-                <div className="flex space-x-2 mt-1">
-                  {['😎', '👤', '🤠', '🐱', '🦊', '🚀'].map(emoji => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      onClick={() => setNewMemberAvatar(emoji)}
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg border ${
-                        newMemberAvatar === emoji ? 'border-blue-500 bg-blue-900/30' : 'border-slate-800 bg-slate-800/60'
-                      }`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
+                <label className="text-xs text-slate-400 block mb-1">
+                  自訂頭像（可用手機或電腦輸入法自由輸入任何 Emoji）
+                </label>
+                <div className="flex items-center space-x-3">
+                  <div className="w-12 h-12 rounded-xl border border-blue-500/50 bg-blue-950/30 flex items-center justify-center text-2xl flex-shrink-0">
+                    {newMemberAvatar || '❓'}
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="輸入表情如 🚀"
+                    value={newMemberAvatar}
+                    onChange={(e) => setNewMemberAvatar(e.target.value)}
+                    className="flex-1 rounded-xl bg-slate-800 border border-slate-700 px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-center font-emoji"
+                  />
                 </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  💡 手機點擊輸入框時，可直接切換鍵盤的表情符號鍵選取任何 Emoji。
+                </p>
               </div>
 
               <div className="flex justify-end space-x-2 pt-2">

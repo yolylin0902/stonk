@@ -23,7 +23,7 @@ export default function App() {
   const loadAvailableDates = useCallback(async (currentMarket) => {
     try {
       const { data, error } = await supabase
-        .table('daily_reports')
+        .from('daily_reports')
         .select('report_date, market')
         .order('report_date', { ascending: false })
 
@@ -64,7 +64,7 @@ export default function App() {
       setErrorMsg('')
 
       let query = supabase
-        .table('daily_reports')
+        .from('daily_reports')
         .select('*')
         .eq('market', targetMarket)
 
@@ -90,7 +90,7 @@ export default function App() {
   // 3. 統計各市場的報告數量
   const loadMarketCounts = useCallback(async (targetDate) => {
     try {
-      let query = supabase.table('daily_reports').select('market')
+      let query = supabase.from('daily_reports').select('market')
       if (targetDate) {
         query = query.eq('report_date', targetDate)
       }

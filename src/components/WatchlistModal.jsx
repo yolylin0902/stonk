@@ -25,7 +25,7 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
     try {
       setLoading(true)
       const { data, error } = await supabase
-        .table('watchlist')
+        .from('watchlist')
         .select('*')
         .order('market')
         .order('symbol')
@@ -60,7 +60,7 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
       setIsSubmitting(true)
       setFeedback({ type: '', message: '' })
 
-      const { data, error } = await supabase.table('watchlist').insert([
+      const { data, error } = await supabase.from('watchlist').insert([
         {
           symbol: cleanSymbol,
           name: cleanName,
@@ -93,7 +93,7 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
     }
 
     try {
-      const { error } = await supabase.table('watchlist').delete().eq('id', id)
+      const { error } = await supabase.from('watchlist').delete().eq('id', id)
       if (error) throw error
 
       setFeedback({ type: 'success', message: `已移除 ${stockName} (${stockSymbol})` })

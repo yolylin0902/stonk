@@ -159,19 +159,18 @@ def upsert_daily_report(client: Client, report_data: Dict[str, Any]) -> bool:
 # ----------------------------------------------------------------------
 def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
     """
-    透過 yfinance 取得最新 2 個交易日資料，計算收盤價與漲跌幅。
-    會自動過濾 NaN 行（避免盤前或數據未結算產生 NaN）。
-    回傳：
-      {
-         "report_date": "YYYY-MM-DD",
-         "close_price": float,
-         "change_percent": float,
-         "prev_close": float
-      }
+    透過 yfinance 取得最新交易日收盤價與漲跌幅。
+    結合 fast_info 與 history 雙重保證，徹底解決美股盤後數據 NaN 導致抓到舊日期的問題。
     """
     try:
         ticker = yf.Ticker(symbol)
-        # 抓取近 1 個月資料以確保能取得至少 2 個有效交易日
+        
+        # 1. 優先嘗試取得 fast_info 即時與最新收盤數據
+        fi = ticker.fast_info
+        fast_last = getattr(fi, "last_price", None)
+        fast_prev = getattr(fi, "regular_market_previous_close", None) or getattr(fi, "previous_close", None)
+
+        # 2. 取得歷史資料以定位精確交易日
         hist = ticker.history(period="1mo")
         if hist.empty or len(hist) < 2:
             hist = ticker.history(period="3mo")
@@ -180,31 +179,39 @@ def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
             logger.warning(f"⚠️ {symbol}: 無法取得歷史股價資料。")
             return None
 
-        # 清除 NaN 的 Close 行（重要：排除盤前空值或未完成交易日的資料）
-        hist = hist.dropna(subset=["Close"])
+        # 取得最後一筆的日期（即使該筆 Close 是 NaN，日期也是最新的交易日）
+        latest_date = hist.index[-1].strftime("%Y-%m-%d")
 
-        if len(hist) < 2:
-            logger.warning(f"⚠️ {symbol}: 有效歷史收盤資料不足 2 個交易日，無法計算漲跌幅。")
+        # 若 fast_info 資料齊全且數值有效，以 fast_info 為準（最即時精確）
+        if fast_last is not None and fast_prev is not None and fast_prev > 0:
+            close_price = round(float(fast_last), 2)
+            prev_close = round(float(fast_prev), 2)
+            change_percent = round(((close_price - prev_close) / prev_close) * 100, 2)
+            return {
+                "report_date": latest_date,
+                "close_price": close_price,
+                "change_percent": change_percent,
+                "prev_close": prev_close,
+            }
+
+        # 備用方案：從 history 清除 NaN 後計算
+        valid_hist = hist.dropna(subset=["Close"])
+        if len(valid_hist) < 2:
+            logger.warning(f"⚠️ {symbol}: 有效歷史收盤資料不足 2 個交易日。")
             return None
 
-        # 取最後兩個有效交易日
-        latest_row = hist.iloc[-1]
-        prev_row = hist.iloc[-2]
-
-        latest_date = hist.index[-1].strftime("%Y-%m-%d")
+        latest_row = valid_hist.iloc[-1]
+        prev_row = valid_hist.iloc[-2]
+        report_date = valid_hist.index[-1].strftime("%Y-%m-%d")
         close_price = round(float(latest_row["Close"]), 2)
-        prev_close = float(prev_row["Close"])
-
-        if prev_close == 0:
-            change_percent = 0.0
-        else:
-            change_percent = round(((close_price - prev_close) / prev_close) * 100, 2)
+        prev_close = round(float(prev_row["Close"]), 2)
+        change_percent = round(((close_price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
         return {
-            "report_date": latest_date,
+            "report_date": report_date,
             "close_price": close_price,
             "change_percent": change_percent,
-            "prev_close": round(prev_close, 2),
+            "prev_close": prev_close,
         }
     except Exception as e:
         logger.error(f"❌ 抓取 {symbol} 股價資訊失敗: {e}")

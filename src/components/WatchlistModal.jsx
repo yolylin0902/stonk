@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react'
-import { X, Plus, Trash2, AlertCircle, Check, Loader2 } from 'lucide-react'
+import { X, Plus, Trash2, AlertCircle, Check, Loader2, Sparkles, CheckSquare, Square } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
-export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
+export default function WatchlistModal({
+  isOpen,
+  onClose,
+  onUpdated,
+  currentProfile,
+  onUpdateProfileHoldings
+}) {
   const [watchlist, setWatchlist] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('ALL') // 'ALL', 'US', 'TW'
@@ -70,12 +76,27 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
 
       if (error) {
         if (error.code === '23505') {
-          throw new Error('此股票代號已存在於自選股中！')
+          // 已存在於資料庫，但自動幫當前成員打勾加入持倉
+          if (currentProfile && onUpdateProfileHoldings) {
+            onUpdateProfileHoldings(cleanSymbol, true)
+            setFeedback({ type: 'success', message: `${cleanSymbol} 已加入 ${currentProfile.name} 的個人持倉！` })
+          } else {
+            throw new Error('此股票代號已存在於自選庫中！')
+          }
+          setSymbol('')
+          setName('')
+          loadWatchlist()
+          return
         }
         throw error
       }
 
-      setFeedback({ type: 'success', message: `已成功新增 ${cleanName} (${cleanSymbol})！` })
+      // 新增成功的同時，自動勾選加入當前家庭成員的持倉
+      if (currentProfile && onUpdateProfileHoldings) {
+        onUpdateProfileHoldings(cleanSymbol, true)
+      }
+
+      setFeedback({ type: 'success', message: `已成功新增 ${cleanName} (${cleanSymbol}) 並納入 ${currentProfile?.name || '個人'} 持倉！` })
       setSymbol('')
       setName('')
       loadWatchlist()
@@ -88,7 +109,7 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
   }
 
   const handleDeleteStock = async (id, stockName, stockSymbol) => {
-    if (!confirm(`確定要從自選股清單中移除 ${stockName} (${stockSymbol}) 嗎？`)) {
+    if (!confirm(`確定要從資料庫完全移除 ${stockName} (${stockSymbol}) 嗎？`)) {
       return
     }
 
@@ -96,12 +117,22 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
       const { error } = await supabase.from('watchlist').delete().eq('id', id)
       if (error) throw error
 
+      if (currentProfile && onUpdateProfileHoldings) {
+        onUpdateProfileHoldings(stockSymbol, false)
+      }
+
       setFeedback({ type: 'success', message: `已移除 ${stockName} (${stockSymbol})` })
       loadWatchlist()
       if (onUpdated) onUpdated()
     } catch (err) {
       setFeedback({ type: 'error', message: '刪除失敗：' + err.message })
     }
+  }
+
+  const toggleMemberHolding = (stockSymbol) => {
+    if (!currentProfile || !onUpdateProfileHoldings) return
+    const isCurrentlyHeld = currentProfile.holdings?.includes(stockSymbol)
+    onUpdateProfileHoldings(stockSymbol, !isCurrentlyHeld)
   }
 
   if (!isOpen) return null
@@ -116,8 +147,15 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
         {/* Modal 標題列 */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/50">
           <div>
-            <h2 className="text-base font-bold text-white">管理追蹤自選股</h2>
-            <p className="text-xs text-slate-400">新增或刪除每日自動爬蟲的股票標的</p>
+            <div className="flex items-center space-x-2">
+              <h2 className="text-base font-bold text-white">管理持倉與自選股</h2>
+              {currentProfile && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
+                  {currentProfile.avatar} {currentProfile.name}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400">勾選為【{currentProfile?.name}】持股，或新增全域追蹤股票</p>
           </div>
           <button
             onClick={onClose}
@@ -236,49 +274,79 @@ export default function WatchlistModal({ isOpen, onClose, onUpdated }) {
           </span>
         </div>
 
-        {/* 自選股清單列表 */}
+        {/* 自選股清單列表（含個人持倉勾選） */}
         <div className="p-5 overflow-y-auto flex-1 space-y-2">
           {loading ? (
             <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center space-y-2">
               <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-              <span className="text-xs">載入自選股清單中...</span>
+              <span className="text-xs">載入清單中...</span>
             </div>
           ) : filteredWatchlist.length === 0 ? (
             <div className="py-8 text-center text-slate-400 text-xs">
-              目前暫無自選股，請利用上方表單新增！
+              目前暫無股票，請利用上方表單新增！
             </div>
           ) : (
-            filteredWatchlist.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800/80 hover:border-slate-700 transition-colors"
-              >
-                <div className="flex items-center space-x-2.5">
-                  <span className="text-base">
-                    {item.market === 'US' ? '🇺🇸' : '🇹🇼'}
-                  </span>
-                  <div>
-                    <div className="text-xs font-bold text-white flex items-center space-x-1.5">
-                      <span>{item.name}</span>
-                      <span className="text-[11px] font-mono text-slate-400 font-medium">
-                        {item.symbol}
+            filteredWatchlist.map((item) => {
+              const isHeld = currentProfile?.holdings?.includes(item.symbol)
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                    isHeld
+                      ? 'bg-blue-950/20 border-blue-500/40'
+                      : 'bg-slate-900 border-slate-800/80 hover:border-slate-700'
+                  }`}
+                >
+                  {/* 左側：勾選設為目前成員的持倉 */}
+                  <div
+                    onClick={() => toggleMemberHolding(item.symbol)}
+                    className="flex items-center space-x-3 cursor-pointer flex-1 select-none"
+                  >
+                    <button
+                      type="button"
+                      className={`p-1 rounded-lg transition-colors ${
+                        isHeld ? 'text-blue-400' : 'text-slate-600 hover:text-slate-400'
+                      }`}
+                    >
+                      {isHeld ? (
+                        <CheckSquare className="w-4 h-4 text-blue-400" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    <div className="flex items-center space-x-2">
+                      <span className="text-base">
+                        {item.market === 'US' ? '🇺🇸' : '🇹🇼'}
                       </span>
-                    </div>
-                    <div className="text-[10px] text-slate-400">
-                      {item.market === 'US' ? '美股' : '台股'}
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center space-x-1.5">
+                          <span>{item.name}</span>
+                          <span className="text-[11px] font-mono text-slate-400 font-medium">
+                            {item.symbol}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 flex items-center space-x-1">
+                          <span>{item.market === 'US' ? '美股' : '台股'}</span>
+                          {isHeld && (
+                            <span className="text-blue-400 font-medium">· 已入持倉</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <button
-                  onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
-                  aria-label="刪除"
-                  className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-90 transition-all"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))
+                  {/* 右側刪除按鈕 */}
+                  <button
+                    onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
+                    aria-label="刪除"
+                    className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 active:scale-90 transition-all ml-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              )
+            })
           )}
         </div>
       </div>

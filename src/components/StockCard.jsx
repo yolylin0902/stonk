@@ -44,7 +44,7 @@ export default function StockCard({ report }) {
   }
 
   // 情緒膠囊：統一低調霧面白
-  const sentimentCls = 'bg-white/[0.07] text-white/70 text-[11px] px-2.5 py-0.5 rounded-full'
+  const sentimentCls = 'bg-white/[0.09] text-white/80 text-[11px] px-2.5 py-0.5 rounded-full font-medium'
 
   // 價格格式化
   const formattedPrice = close_price != null
@@ -81,7 +81,7 @@ export default function StockCard({ report }) {
           <h2 className="text-[22px] font-bold text-white tracking-tight leading-tight tabular">
             {symbol}
           </h2>
-          <p className="text-[13px] text-white/40 font-normal mt-0.5 leading-tight truncate max-w-[160px]">
+          <p className="text-[13px] text-white/55 font-normal mt-0.5 leading-tight truncate max-w-[160px]">
             {name}
           </p>
         </div>
@@ -117,7 +117,7 @@ export default function StockCard({ report }) {
           {sentiment && (
             <span className={sentimentCls}>{sentiment}</span>
           )}
-          <p className="text-[15px] font-medium text-white/92 leading-snug tracking-tight mt-2">
+          <p className="text-[15px] font-medium text-white/95 leading-snug tracking-tight mt-2">
             {headline}
           </p>
         </div>
@@ -128,10 +128,10 @@ export default function StockCard({ report }) {
         <div className="mt-4 space-y-2 border-t border-white/[0.07] pt-4">
           {bullets.map((bullet, idx) => (
             <div key={idx} className="flex items-start space-x-2.5">
-              <span className="flex-shrink-0 w-[18px] h-[18px] rounded-full bg-white/[0.07] text-white/45 font-semibold flex items-center justify-center text-[10px] tabular mt-0.5">
+              <span className="flex-shrink-0 w-[18px] h-[18px] rounded-full bg-white/[0.09] text-white/60 font-semibold flex items-center justify-center text-[10px] tabular mt-0.5">
                 {idx + 1}
               </span>
-              <p className="text-[13.5px] text-white/68 leading-relaxed flex-1">
+              <p className="text-[13.5px] text-white/80 leading-relaxed flex-1">
                 {bullet}
               </p>
             </div>
@@ -144,7 +144,7 @@ export default function StockCard({ report }) {
         <div className="mt-4 border-t border-white/[0.07] pt-3">
           <button
             onClick={() => setIsNewsExpanded(!isNewsExpanded)}
-            className="w-full flex items-center justify-between py-0.5 text-[13px] text-white/40 hover:text-white/60 transition-colors font-medium active:scale-[0.98]"
+            className="w-full flex items-center justify-between py-0.5 text-[13px] text-white/50 hover:text-white/70 transition-colors font-medium active:scale-[0.98]"
           >
             <span>相關報導</span>
             {isNewsExpanded ? (
@@ -164,11 +164,11 @@ export default function StockCard({ report }) {
                   rel="noopener noreferrer"
                   className="group flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.07] transition-all"
                 >
-                  <span className="text-[13px] text-white/60 group-hover:text-white/80 transition-colors line-clamp-2 flex-1 pr-2 leading-snug">
+                  <span className="text-[13px] text-white/75 group-hover:text-white/95 transition-colors line-clamp-2 flex-1 pr-2 leading-snug">
                     {item.title}
                   </span>
                   <ExternalLink
-                    className="w-3.5 h-3.5 text-white/25 group-hover:text-white/50 flex-shrink-0 transition-colors"
+                    className="w-3.5 h-3.5 text-white/35 group-hover:text-white/60 flex-shrink-0 transition-colors"
                     strokeWidth={1.75}
                   />
                 </a>

@@ -270,13 +270,17 @@ export default function App() {
   }, [reports])
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
-      {/* 月光環境光暈 — 極低彩度、頂部唯一一道冷銀灰微光 */}
+    <div className="min-h-screen bg-transparent text-white flex flex-col">
+      {/* 玻璃後方低彩度光影（左上、右中、左下 3 團冷銀灰與深海霧藍，滑動時呈現通透折射） */}
       <div
         aria-hidden="true"
-        className="fixed inset-0 -z-10 pointer-events-none"
+        className="fixed inset-0 -z-10 pointer-events-none overflow-hidden"
         style={{
-          background: 'radial-gradient(ellipse 80% 40% at 50% -10%, rgba(210, 220, 235, 0.11), transparent)'
+          background: `
+            radial-gradient(circle at 18% 15%, rgba(180, 200, 230, 0.16), transparent 45%),
+            radial-gradient(circle at 85% 48%, rgba(130, 155, 195, 0.13), transparent 50%),
+            radial-gradient(circle at 25% 85%, rgba(165, 180, 205, 0.12), transparent 45%)
+          `
         }}
       />
       {/* 頂部導航 */}

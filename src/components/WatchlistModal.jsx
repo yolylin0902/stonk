@@ -205,7 +205,7 @@ export default function WatchlistModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-md">
-      <div className="w-full sm:max-w-md ios-glass rounded-t-[32px] sm:rounded-[28px] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col ios-fade-in">
+      <div className="w-full sm:max-w-md ios-glass-modal rounded-t-[32px] sm:rounded-[28px] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col ios-fade-in">
         {/* iOS Grabber */}
         <div className="w-9 h-1 rounded-full bg-white/25 mx-auto mt-3 mb-1 flex-shrink-0" />
 

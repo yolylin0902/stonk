@@ -5,10 +5,14 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
-  Info
+  Search,
+  ExternalLink,
+  Compass,
+  X,
+  Loader2
 } from 'lucide-react'
 
-// 全台 28 處代表性知名避難公園經緯度與點位資料（涵蓋北、中、南、東各縣市）
+// 全台代表性知名避難公園預設指標資料庫（涵蓋北、中、南、東各縣市）
 const PARKS_DATABASE = [
   // 台北市
   {
@@ -274,6 +278,44 @@ const PARKS_DATABASE = [
   }
 ]
 
+// 雜湊字串以產生一致的趣味幽默資料
+function hashString(str) {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i)
+    hash |= 0
+  }
+  return hash
+}
+
+// 根據小公園名稱動態生成避難長椅幽默資料
+function generateParkHumor(name, index) {
+  const vibes = [
+    '🌳 鄰里隱密綠洲 / 避風擋雨好去處，夜晚安靜舒適',
+    '🛝 社區兒童遊樂場 / 溜滑梯下VIP專屬避風位',
+    '👑 巷弄生活綠地 / 樹蔭茂密適合閉目深呼吸洗滌心靈',
+    '🌾 休閒步道公園 / 人流少同溫層少，適合安靜思考投資哲學',
+    '⛩️ 社區花園廣場 / 長輩下棋同溫層溫暖相伴無壓力',
+    '🌿 親水街角綠帶 / 晚風徐徐，自備乾淨厚紙板即可安心躺平',
+    '🏕️ 綠意盎然小休閒處 / 涼爽通風，韭菜深夜避難優選',
+    '🌸 景觀花園草坪 / 適合曬曬太陽吹吹微風，撫平被軋空的受傷心靈'
+  ]
+  const spots = [
+    '露天休閒木椅 (空位充裕，建議自備防風外套)',
+    '溜滑梯避風凹處 (黃金避難位，目前無人佔據)',
+    '涼亭圓形石桌椅 (通風良好，滿座率 20%)',
+    '大榕樹下環形石階 (平整好躺，空位極多)',
+    '體健設施區旁木凳 (運動長輩作伴，安心感滿分)',
+    '景觀木棧平台 (視野遼闊，思考人生最佳落腳點)',
+    '雨遮迴廊長凳 (遮雨第一排，目前無人排隊)'
+  ]
+  const hash = Math.abs(hashString(name) + index)
+  return {
+    vibe: vibes[hash % vibes.length],
+    spots: spots[(hash + 3) % spots.length]
+  }
+}
+
 // Haversine formula 計算兩經緯度距離 (公尺)
 function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000 // 地球半徑 (公尺)
@@ -293,10 +335,26 @@ export default function ParkSleepSection() {
   const [isExpanded, setIsExpanded] = useState(false)
   const [showAllNearby, setShowAllNearby] = useState(false)
   const [userLocation, setUserLocation] = useState(null)
+  const [userDistrict, setUserDistrict] = useState('')
   const [locationStatus, setLocationStatus] = useState('idle') // 'idle', 'locating', 'success', 'denied'
 
-  // 根據 GPS 取得公園距離排序清單
-  const parksWithDistance = useMemo(() => {
+  // 自訂搜尋小公園狀態
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
+
+  // 格式化距離
+  const formatDistance = (meters) => {
+    if (meters === null || meters === undefined) return null
+    if (meters < 1000) {
+      return `${meters} 公尺`
+    }
+    return `${(meters / 1000).toFixed(1)} 公里`
+  }
+
+  // 根據 GPS 取得預設指標公園距離排序清單
+  const defaultParksWithDistance = useMemo(() => {
     if (!userLocation) {
       return PARKS_DATABASE.map((p) => ({ ...p, distance: null }))
     }
@@ -311,9 +369,10 @@ export default function ParkSleepSection() {
     }).sort((a, b) => a.distance - b.distance)
   }, [userLocation])
 
-  const nearestPark = parksWithDistance[0]
+  // 當前最鄰近指標公園
+  const nearestPark = defaultParksWithDistance[0]
 
-  // 要求定位
+  // 要求定位並反向地理編碼取得當前行政區
   const requestLocation = () => {
     if (!navigator.geolocation) {
       setLocationStatus('denied')
@@ -322,11 +381,31 @@ export default function ParkSleepSection() {
     setLocationStatus('locating')
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setUserLocation({
+        const coords = {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude
-        })
+        }
+        setUserLocation(coords)
         setLocationStatus('success')
+
+        // 反向地理編碼取得當前行政區 (用於「我家附近」智能搜尋)
+        fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${coords.latitude}&lon=${coords.longitude}&format=json&zoom=14&addressdetails=1`,
+          {
+            headers: { 'Accept-Language': 'zh-TW,zh;q=0.9' }
+          }
+        )
+          .then((r) => r.json())
+          .then((data) => {
+            const addr = data.address || {}
+            const district =
+              (addr.city || addr.county || '') +
+              (addr.suburb || addr.town || addr.district || '')
+            if (district) {
+              setUserDistrict(district)
+            }
+          })
+          .catch(() => {})
       },
       (err) => {
         console.warn('定位失敗或未授權:', err.message)
@@ -336,16 +415,137 @@ export default function ParkSleepSection() {
     )
   }
 
-  // 格式化距離
-  const formatDistance = (meters) => {
-    if (meters === null || meters === undefined) return null
-    if (meters < 1000) {
-      return `${meters} 公尺`
+  // 執行開放式小公園搜尋 (支援任何社區小公園、路名、行政區)
+  const handleSearch = async (overrideQuery) => {
+    const q = (overrideQuery !== undefined ? overrideQuery : searchQuery).trim()
+    if (!q) {
+      setSearchResults(null)
+      setSearchError('')
+      return
     }
-    return `${(meters / 1000).toFixed(1)} 公里`
+
+    setIsSearching(true)
+    setSearchError('')
+
+    try {
+      let finalQuery = q
+
+      // 如果使用者輸入「我家附近」或「附近」，且有 GPS
+      if ((q.includes('附近') || q.includes('我家')) && userLocation) {
+        if (userDistrict) {
+          finalQuery = `${userDistrict} 公園`
+        } else {
+          finalQuery = '公園'
+        }
+      } else if (
+        !finalQuery.includes('公園') &&
+        !finalQuery.includes('綠地') &&
+        !finalQuery.includes('廣場') &&
+        !finalQuery.includes('風景區')
+      ) {
+        finalQuery = `${finalQuery} 公園`
+      }
+
+      const endpoint = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+        finalQuery
+      )}&format=json&limit=12&countrycodes=tw&addressdetails=1`
+
+      const res = await fetch(endpoint, {
+        headers: {
+          'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
+        }
+      })
+
+      if (!res.ok) throw new Error('搜尋服務忙碌中，請稍後再試')
+      const data = await res.json()
+
+      if (!Array.isArray(data) || data.length === 0) {
+        setSearchResults([])
+        setSearchError(
+          `查無「${q}」相關公園，可點擊上方按鈕直接用 Google 地圖尋找！`
+        )
+        return
+      }
+
+      // 格式化搜尋結果
+      const formatted = data.map((item, idx) => {
+        const lat = parseFloat(item.lat)
+        const lng = parseFloat(item.lon)
+        const addr = item.address || {}
+
+        const city =
+          [
+            addr.city || addr.county || '',
+            addr.suburb || addr.town || addr.district || '',
+            addr.neighbourhood || addr.village || ''
+          ]
+            .filter(Boolean)
+            .join(' ') ||
+          item.display_name.split(',')[1] ||
+          '台灣'
+
+        const name = item.name || item.display_name.split(',')[0] || q
+        const humor = generateParkHumor(name, idx)
+
+        let distance = null
+        if (userLocation) {
+          distance = getDistanceFromLatLonInMeters(
+            userLocation.latitude,
+            userLocation.longitude,
+            lat,
+            lng
+          )
+        }
+
+        return {
+          id: `search_${item.place_id || idx}`,
+          name: name,
+          city: city,
+          lat,
+          lng,
+          distance,
+          vibe: humor.vibe,
+          spots: humor.spots
+        }
+      })
+
+      // 如果有 GPS，依照距離由近到遠排序
+      if (userLocation) {
+        formatted.sort(
+          (a, b) => (a.distance || 9999999) - (b.distance || 9999999)
+        )
+      }
+
+      setSearchResults(formatted)
+    } catch (err) {
+      console.error('公園搜尋失敗:', err)
+      setSearchError('搜尋小公園時連線逾時，建議直接點上方按鈕在 Google 地圖開啟！')
+    } finally {
+      setIsSearching(false)
+    }
   }
 
-  const visibleParks = showAllNearby ? parksWithDistance.slice(0, 8) : parksWithDistance.slice(0, 3)
+  // 清除搜尋，返回預設指標公園清單
+  const handleClearSearch = () => {
+    setSearchQuery('')
+    setSearchResults(null)
+    setSearchError('')
+  }
+
+  // 產生 Google 地圖尋找身邊所有公園的 URL
+  const googleMapsAllNearbyUrl = userLocation
+    ? `https://www.google.com/maps/search/%E5%85%AC%E5%9C%92/@${userLocation.latitude},${userLocation.longitude},15z`
+    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+        searchQuery ? searchQuery + ' 公園' : '附近公園'
+      )}`
+
+  // 決定要渲染的公園清單
+  const isSearchMode = searchResults !== null
+  const currentParkList = isSearchMode
+    ? searchResults
+    : showAllNearby
+    ? defaultParksWithDistance.slice(0, 8)
+    : defaultParksWithDistance.slice(0, 3)
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3.5 text-slate-100 transition-all">
@@ -355,17 +555,19 @@ export default function ParkSleepSection() {
         className="flex cursor-pointer items-center justify-between select-none"
       >
         <div className="flex items-center space-x-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-800 text-slate-300">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <MapPin className="h-4 w-4" />
           </div>
           <div>
             <span className="text-xs font-semibold text-slate-200">
-              附近避難公園雷達
+              附近避難公園雷達 (韭菜過夜指南) 🏕️
             </span>
             <p className="text-[11px] text-slate-400">
               {userLocation && nearestPark?.distance
-                ? `最近點：${nearestPark.name.split('・')[1]} (${formatDistance(nearestPark.distance)})`
-                : '以 GPS 探測離你最近的避難長椅'}
+                ? `最近指標點：${nearestPark.name.split('・')[1]} (${formatDistance(
+                    nearestPark.distance
+                  )})`
+                : '支援全台任意巷弄小公園精細化搜尋 / Google 地圖導航'}
             </p>
           </div>
         </div>
@@ -381,73 +583,253 @@ export default function ParkSleepSection() {
 
       {/* 展開後的內容 */}
       {isExpanded && (
-        <div className="mt-3 space-y-3 pt-3 border-t border-slate-800 animate-fade-in">
-          {/* 定位按鈕與狀態列 */}
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[11px] text-slate-400">
-              {userLocation ? '已依即時距離排序 (全台 28 處指標避難點)' : '全台指標避難公園 (點擊定位可自動算距離)'}
-            </span>
-            {!userLocation ? (
-              <button
-                onClick={requestLocation}
-                disabled={locationStatus === 'locating'}
-                className="flex items-center space-x-1 rounded-lg bg-blue-600/20 px-2.5 py-1 text-[11px] font-medium text-blue-400 hover:bg-blue-600/30 active:scale-95 transition-all border border-blue-500/30"
-              >
-                <Navigation className="h-3 w-3" />
-                <span>{locationStatus === 'locating' ? '定位中...' : '取得我的位置'}</span>
-              </button>
-            ) : (
-              <button
-                onClick={requestLocation}
-                className="flex items-center space-x-1 text-[11px] text-slate-400 hover:text-slate-200"
-              >
-                <RefreshCw className="h-3 w-3" />
-                <span>重新定位</span>
-              </button>
-            )}
+        <div className="mt-3 space-y-3.5 pt-3 border-t border-slate-800 animate-fade-in">
+          {/* 快捷操作工具列：GPS定位 + Google Maps 全部公園總入口 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            {/* GPS定位 */}
+            <div>
+              {!userLocation ? (
+                <button
+                  onClick={requestLocation}
+                  disabled={locationStatus === 'locating'}
+                  className="flex items-center space-x-1.5 rounded-lg bg-blue-600/20 px-2.5 py-1.5 text-[11px] font-semibold text-blue-400 hover:bg-blue-600/30 active:scale-95 transition-all border border-blue-500/30"
+                >
+                  <Navigation className="h-3.5 w-3.5" />
+                  <span>
+                    {locationStatus === 'locating' ? 'GPS定位中...' : '取得我的位置算距離'}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex items-center space-x-1.5 text-[11px] text-emerald-400 font-mono">
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>
+                    {userDistrict ? `已定位：${userDistrict}` : 'GPS 已定位'}
+                  </span>
+                  <button
+                    onClick={requestLocation}
+                    className="text-slate-400 hover:text-slate-200 ml-1 p-0.5"
+                    title="重新整理位置"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Google 地圖搜尋身邊所有公園 */}
+            <a
+              href={googleMapsAllNearbyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-semibold hover:bg-emerald-600/30 active:scale-95 transition-all shadow-sm"
+            >
+              <Compass className="w-3.5 h-3.5 text-emerald-400" />
+              <span>在 Google 地圖找周邊全部公園</span>
+              <ExternalLink className="w-3 h-3 text-emerald-400/80" />
+            </a>
           </div>
 
           {locationStatus === 'denied' && (
             <p className="text-[11px] text-amber-400/90 leading-tight">
-              ⚠️ 未取得手機 GPS 定位權限，目前顯示預設代表性指標公園。
+              ⚠️ 未取得手機 GPS 定位權限，您仍可使用下方搜尋欄搜尋住家附近的任何小公園！
             </p>
           )}
 
-          {/* 推薦公園列表 */}
+          {/* 小公園即時精細化搜尋欄 */}
           <div className="space-y-2">
-            {visibleParks.map((park) => (
-              <div
-                key={park.id}
-                className="rounded-xl bg-slate-800/40 border border-slate-800/80 p-2.5 text-xs transition-all hover:border-slate-700"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-200">{park.name}</span>
-                  {park.distance !== null ? (
-                    <span className="rounded bg-blue-500/10 px-2 py-0.5 font-mono text-[11px] font-semibold text-blue-400 border border-blue-500/20">
-                      約 {formatDistance(park.distance)}
-                    </span>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleSearch()
+              }}
+              className="relative flex items-center"
+            >
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜尋住家旁小公園 (如：大智、永春、仁愛、介壽)..."
+                className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-9 pr-20 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+              />
+              <div className="absolute right-1.5 flex items-center space-x-1">
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={handleClearSearch}
+                    className="p-1 text-slate-400 hover:text-slate-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isSearching}
+                  className="px-2.5 py-1 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-500 transition-all active:scale-95 flex items-center space-x-1 shadow"
+                >
+                  {isSearching ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
                   ) : (
-                    <span className="text-[11px] text-slate-400 font-mono">{park.city}</span>
+                    <span>搜尋</span>
                   )}
-                </div>
-
-                <p className="text-[11px] text-slate-400 mt-1">{park.vibe}</p>
-                
-                <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-800/50 pt-1.5">
-                  <span>長椅況：<strong className="text-slate-300 font-normal">{park.spots}</strong></span>
-                </div>
+                </button>
               </div>
-            ))}
+            </form>
+
+            {/* 快速推薦搜尋標籤 Chips */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[10px] text-slate-400">快速搜尋：</span>
+              {[
+                '我家附近',
+                '永春公園',
+                '大智公園',
+                '仁愛公園',
+                '介壽公園',
+                '四號公園'
+              ].map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery(tag)
+                    handleSearch(tag)
+                  }}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border border-slate-700/60 transition-all"
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* 展開更多按鈕 */}
-          <div className="text-center pt-1">
-            <button
-              onClick={() => setShowAllNearby(!showAllNearby)}
-              className="text-[11px] text-slate-400 hover:text-blue-400 transition-colors"
-            >
-              {showAllNearby ? '收合公園列表' : '查看更多附近避難公園 (全台共 28 處)'}
-            </button>
+          {/* 搜尋錯誤或無結果提示 */}
+          {searchError && (
+            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+              {searchError}
+            </div>
+          )}
+
+          {/* 列表標題列 */}
+          <div className="flex items-center justify-between text-xs pt-1">
+            <span className="font-semibold text-slate-300">
+              {isSearchMode
+                ? `🔍 搜尋結果 (${searchResults.length} 處鄰里公園)`
+                : userLocation
+                ? '📍 離你最近的避難公園 (已依即時距離排序)'
+                : '全台指標避難公園 (點擊定位可自動算距離)'}
+            </span>
+
+            {isSearchMode && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="text-[11px] text-blue-400 hover:text-blue-300 underline"
+              >
+                返回指標公園
+              </button>
+            )}
+          </div>
+
+          {/* 公園卡片列表 */}
+          <div className="space-y-2">
+            {isSearching ? (
+              <div className="py-8 flex flex-col items-center justify-center space-y-2 text-slate-400">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="text-xs">正在全台地理數據庫搜尋小公園...</span>
+              </div>
+            ) : currentParkList.length === 0 ? (
+              <div className="p-6 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-400 space-y-2">
+                <p>找不到符合條件的公園</p>
+                <a
+                  href={googleMapsAllNearbyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center space-x-1 text-emerald-400 underline"
+                >
+                  <span>在 Google 地圖直接開啟附近所有公園</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            ) : (
+              currentParkList.map((park) => {
+                // Google Maps 個別公園導航連結
+                const gmapsParkUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                  park.name.replace(/^.+・/, '') + ' ' + (park.city || '')
+                )}`
+
+                return (
+                  <div
+                    key={park.id}
+                    className="rounded-xl bg-slate-800/40 border border-slate-800/80 p-2.5 text-xs transition-all hover:border-slate-700"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 pr-2">
+                        <div className="flex items-center space-x-1.5 flex-wrap">
+                          <span className="font-bold text-slate-100 text-[13px]">
+                            {park.name}
+                          </span>
+                          {park.city && (
+                            <span className="text-[10px] text-slate-400">
+                              {park.city}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-1.5 flex-shrink-0">
+                        {park.distance !== null && (
+                          <span className="rounded bg-blue-500/10 px-2 py-0.5 font-mono text-[11px] font-semibold text-blue-400 border border-blue-500/20">
+                            約 {formatDistance(park.distance)}
+                          </span>
+                        )}
+                        <a
+                          href={gmapsParkUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="在 Google Maps 查看公園並開啟導航"
+                          className="flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium hover:bg-emerald-600/30 transition-all active:scale-95"
+                        >
+                          <span>導航</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+                      {park.vibe}
+                    </p>
+
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-800/60 pt-1.5">
+                      <span>
+                        長椅況：
+                        <strong className="text-slate-300 font-normal">
+                          {park.spots}
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+
+          {/* 預設模式下的「查看更多指標公園」按鈕 */}
+          {!isSearchMode && (
+            <div className="text-center pt-1">
+              <button
+                onClick={() => setShowAllNearby(!showAllNearby)}
+                className="text-[11px] text-slate-400 hover:text-blue-400 transition-colors"
+              >
+                {showAllNearby
+                  ? '收合指標公園'
+                  : '查看更多指標公園 (全台共 28 處代表性綠地)'}
+              </button>
+            </div>
+          )}
+
+          {/* 溫馨幽默避難警語 */}
+          <div className="rounded-xl bg-slate-900/80 border border-slate-800 p-2 text-[10px] text-slate-400 leading-relaxed text-center">
+            💡 韭菜避難小貼士：深夜風大請備妥防風外套與乾淨紙箱；長椅佔位純屬娛樂，投資有賺有賠，心態保持健康最重要！
           </div>
         </div>
       )}

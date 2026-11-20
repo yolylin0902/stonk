@@ -59,9 +59,11 @@ export default function StockCard({ report }) {
   }
 
   // 價格格式化
-  const formattedPrice = isUS
-    ? `$${Number(close_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : `NT$ ${Number(close_price).toLocaleString('zh-TW', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`
+  const formattedPrice = close_price != null
+    ? (isUS
+        ? `$${Number(close_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : `NT$ ${Number(close_price).toLocaleString('zh-TW', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`)
+    : '--'
 
   // 確保 story_bullets 為陣列
   const bullets = Array.isArray(story_bullets)
@@ -98,16 +100,22 @@ export default function StockCard({ report }) {
             {formattedPrice}
           </div>
           <div className="flex items-center justify-end space-x-1.5 mt-0.5">
-            <span
-              className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs font-bold border ${trendBg}`}
-            >
-              {isUp && <TrendingUp className="w-3 h-3" />}
-              {isDown && <TrendingDown className="w-3 h-3" />}
-              {isFlat && <Minus className="w-3 h-3" />}
-              <span>
-                {change_percent > 0 ? `+${change_percent}` : change_percent}%
+            {change_percent != null ? (
+              <span
+                className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs font-bold border ${trendBg}`}
+              >
+                {isUp && <TrendingUp className="w-3 h-3" />}
+                {isDown && <TrendingDown className="w-3 h-3" />}
+                {isFlat && <Minus className="w-3 h-3" />}
+                <span>
+                  {change_percent > 0 ? `+${change_percent}` : change_percent}%
+                </span>
               </span>
-            </span>
+            ) : (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border border-blue-500/30 bg-blue-500/10 text-blue-400">
+                待收盤分析
+              </span>
+            )}
           </div>
         </div>
       </div>

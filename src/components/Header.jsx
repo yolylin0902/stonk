@@ -13,7 +13,7 @@ export default function Header({ onOpenWatchlist, onRefresh, isRefreshing }) {
           </div>
           <div>
             <div className="flex items-center space-x-1.5">
-              <h1 className="text-base font-bold text-white tracking-tight">漲跌故事儀表板</h1>
+              <h1 className="text-base font-bold text-white tracking-tight">漲跌原因分析</h1>
               <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400 font-semibold rounded-md border border-blue-500/20">AI</span>
             </div>
             <p className="text-[11px] text-slate-400 font-medium">每日收盤精華 · 核心原因解密</p>

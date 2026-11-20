@@ -1,6 +1,6 @@
 {
-  "name": "收盤漲跌故事儀表板",
-  "short_name": "StockStory",
+  "name": "漲跌原因分析",
+  "short_name": "漲跌原因",
   "description": "每日美股／台股收盤行情、漲跌核心原因與 AI 重點歸納",
   "start_url": "/stonk/",
   "scope": "/stonk/",

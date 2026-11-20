@@ -14,12 +14,23 @@ import {
   setActiveProfileId
 } from './lib/profileManager'
 import { supabase } from './lib/supabase'
-import { Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react'
+import { Loader2, AlertCircle, Eye, EyeOff, BarChart3, Layers, Plus } from 'lucide-react'
+
+// 判斷是否為市場指數或核心 ETF (放在指數區)
+export const isMarketIndex = (symbol) => {
+  if (!symbol) return false
+  if (symbol.startsWith('^')) return true
+  // 台股市場大盤與核心領域 ETF
+  if (['0050.TW', '0056.TW', '00878.TW', '0052.TW', '00919.TW', '00929.TW'].includes(symbol)) return true
+  // 美股主要指數型 ETF
+  if (['SPY', 'QQQ', 'DIA', 'IWM', 'SOXX'].includes(symbol)) return true
+  return false
+}
 
 export default function App() {
   const [market, setMarket] = useState('US') // 'US' or 'TW'
   const [reports, setReports] = useState([])
-  const [allDateReports, setAllDateReports] = useState([]) // 用於家庭成員計算所有市場個股慘況
+  const [allDateReports, setAllDateReports] = useState([])
   const [availableDates, setAvailableDates] = useState([])
   const [selectedDate, setSelectedDate] = useState('')
   const [loading, setLoading] = useState(true)
@@ -28,16 +39,16 @@ export default function App() {
   const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false)
   const [marketCounts, setMarketCounts] = useState({ US: 0, TW: 0 })
 
-  // Netflix 家庭成員狀態管理 (持久化於 localStorage)
+  // 使用者狀態管理 (持久化於 localStorage)
   const [profiles, setProfiles] = useState(() => getStoredProfiles())
   const [activeProfileId, setActiveProfile] = useState(() => getActiveProfileId())
-  const [filterOnlyHoldings, setFilterOnlyHoldings] = useState(false) // 是否僅看該朋友持倉
+  const [filterOnlyHoldings, setFilterOnlyHoldings] = useState(false)
 
   const currentProfile = useMemo(() => {
     return profiles.find((p) => p.id === activeProfileId) || profiles[0]
   }, [profiles, activeProfileId])
 
-  // 切換家庭成員
+  // 切換使用者
   const handleSelectProfile = (id) => {
     setActiveProfile(id)
     setActiveProfileId(id)
@@ -61,7 +72,7 @@ export default function App() {
     }
   }
 
-  // 更新當前成員的持股清單
+  // 更新當前使用者的持股清單
   const handleUpdateProfileHoldings = (symbol, isAdd) => {
     const updated = profiles.map((p) => {
       if (p.id === activeProfileId) {
@@ -115,13 +126,13 @@ export default function App() {
     }
   }, [])
 
-  // 2. 撈取當日指定市場的個股報告，同時拉取當日全市場資料給家庭頭像分析
+  // 2. 撈取當日指定市場的報告，並整合 watchlist 中剛新增尚未爬取報告的標的
   const loadReports = useCallback(async (targetMarket, targetDate) => {
     try {
       setLoading(true)
       setErrorMsg('')
 
-      // 撈取當日全市場資料（給偷看跌多慘用）
+      // 撈取全量報告
       let allQuery = supabase.from('daily_reports').select('*')
       if (targetDate) {
         allQuery = allQuery.eq('report_date', targetDate)
@@ -131,15 +142,50 @@ export default function App() {
         setAllDateReports(allData)
       }
 
-      // 篩選當前市場報告
+      // 取得自選股表以確保使用者新加入的個股 (如 SMCI) 即使尚未爬蟲也能顯示
+      const { data: watchData } = await supabase.from('watchlist').select('*')
+
       const currentMarketReports = (allData || []).filter(
         (r) => r.market === targetMarket
       )
-      setReports(
-        currentMarketReports.sort(
-          (a, b) => Number(b.change_percent) - Number(a.change_percent)
+
+      // 檢查是否有在 watchlist 但尚未產出 daily_reports 的標的
+      const missingFromReports = (watchData || [])
+        .filter(
+          (w) =>
+            w.market === targetMarket &&
+            !currentMarketReports.some((r) => r.symbol === w.symbol)
         )
+        .map((w) => ({
+          id: 'pending_' + w.symbol,
+          symbol: w.symbol,
+          name: w.name,
+          market: w.market,
+          close_price: null,
+          change_percent: null,
+          sentiment: '中性',
+          headline: '已加入追蹤，等待今日收盤排程自動分析',
+          story_bullets: [
+            '已成功納入系統追蹤清單。',
+            '收盤後將自動由 AI 彙整最新新聞並產出漲跌故事。',
+            '可隨時點擊右上角自選股管理持倉。'
+          ],
+          news_links: [],
+          isPending: true
+        }))
+
+      const combined = [...currentMarketReports, ...missingFromReports].sort(
+        (a, b) => {
+          // 指數置頂，其餘按漲跌幅排序
+          const aIsIdx = isMarketIndex(a.symbol)
+          const bIsIdx = isMarketIndex(b.symbol)
+          if (aIsIdx && !bIsIdx) return -1
+          if (!aIsIdx && bIsIdx) return 1
+          return Number(b.change_percent || 0) - Number(a.change_percent || 0)
+        }
       )
+
+      setReports(combined)
     } catch (err) {
       console.error('撈取報告失敗:', err)
       setErrorMsg('載入報告失敗：' + (err.message || '請檢查網路連線或金鑰設定'))
@@ -202,12 +248,21 @@ export default function App() {
     init()
   }, [loadAvailableDates, loadReports, loadMarketCounts])
 
-  // 根據家庭成員持倉過濾顯示的報告清單
+  // 根據使用者持倉過濾顯示的報告清單
   const displayedReports = useMemo(() => {
     if (!filterOnlyHoldings) return reports
     const memberHoldings = currentProfile?.holdings || []
     return reports.filter((r) => memberHoldings.includes(r.symbol))
   }, [reports, filterOnlyHoldings, currentProfile])
+
+  // 分離出「指數區」與「自選個股區」
+  const indexReports = useMemo(() => {
+    return displayedReports.filter((r) => isMarketIndex(r.symbol))
+  }, [displayedReports])
+
+  const userStockReports = useMemo(() => {
+    return displayedReports.filter((r) => !isMarketIndex(r.symbol))
+  }, [displayedReports])
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white">
@@ -253,7 +308,7 @@ export default function App() {
               <span className="text-white font-medium">
                 {filterOnlyHoldings
                   ? `只看 ${currentProfile.name} 的自選 (${currentProfile.holdings?.length || 0}檔)`
-                  : '全市場收盤報告'}
+                  : '全部市場報告'}
               </span>
             </span>
             <button
@@ -295,7 +350,7 @@ export default function App() {
           <div className="py-20 flex flex-col items-center justify-center space-y-3 text-slate-400">
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
             <span className="text-xs font-medium tracking-wide">
-              正在獲取 {market === 'US' ? '美股' : '台股'} 最新收盤故事...
+              正在獲取 {market === 'US' ? '美股' : '台股'} 最新收盤走勢...
             </span>
           </div>
         ) : displayedReports.length === 0 ? (
@@ -305,15 +360,68 @@ export default function App() {
             onOpenWatchlist={() => setIsWatchlistModalOpen(true)}
           />
         ) : (
-          <div className="space-y-3.5 pb-8">
-            {displayedReports.map((report) => (
-              <StockCard key={report.id || report.symbol} report={report} />
-            ))}
+          <div className="space-y-5 pb-8">
+            {/* 1. 市場指數區 (四大指數 / 核心 ETF) */}
+            {indexReports.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
+                    <BarChart3 className="w-4 h-4 text-blue-400" />
+                    <span>{market === 'US' ? '美股四大指數區' : '台股指數與市場 ETF'}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">大盤基準</span>
+                </div>
+                <div className="space-y-3">
+                  {indexReports.map((report) => (
+                    <StockCard key={report.id || report.symbol} report={report} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* 2. 自選個股區 (使用者自由新增) */}
+            <section className="space-y-3 pt-1">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
+                  <Layers className="w-4 h-4 text-emerald-400" />
+                  <span>自選個股區 ({userStockReports.length})</span>
+                </div>
+                <button
+                  onClick={() => setIsWatchlistModalOpen(true)}
+                  className="flex items-center space-x-1 text-[11px] text-blue-400 hover:text-blue-300 font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>新增自選股</span>
+                </button>
+              </div>
+
+              {userStockReports.length === 0 ? (
+                <div className="p-6 rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 text-center space-y-2.5">
+                  <p className="text-xs text-slate-400">
+                    {filterOnlyHoldings
+                      ? `${currentProfile.name} 尚未新增此市場的自選個股`
+                      : '目前尚無自選個股，留給使用者自由新增！'}
+                  </p>
+                  <button
+                    onClick={() => setIsWatchlistModalOpen(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-semibold hover:bg-blue-600/30 active:scale-95 transition-all"
+                  >
+                    + 新增自選個股 (例如 SMCI, NVDA)
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {userStockReports.map((report) => (
+                    <StockCard key={report.id || report.symbol} report={report} />
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         )}
       </main>
 
-      {/* 管理自選股彈出視窗（支援為特定成員打勾持倉） */}
+      {/* 管理自選股彈出視窗 */}
       <WatchlistModal
         isOpen={isWatchlistModalOpen}
         onClose={() => setIsWatchlistModalOpen(false)}
@@ -321,11 +429,6 @@ export default function App() {
         currentProfile={currentProfile}
         onUpdateProfileHoldings={handleUpdateProfileHoldings}
       />
-
-      {/* 底部行動安全區域與版本資訊 */}
-      <footer className="text-center py-4 text-[10px] text-slate-400 border-t border-slate-900 safe-bottom">
-        收盤漲跌故事儀表板 · 韭菜家庭方案 · 自動化雲端運作
-      </footer>
     </div>
   )
 }

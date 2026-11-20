@@ -5,6 +5,7 @@ import DateSelector from './components/DateSelector'
 import StockCard from './components/StockCard'
 import WatchlistModal from './components/WatchlistModal'
 import EmptyState from './components/EmptyState'
+import ParkSleepSection from './components/ParkSleepSection'
 import { supabase } from './lib/supabase'
 import { Loader2, AlertCircle } from 'lucide-react'
 
@@ -165,6 +166,9 @@ export default function App() {
             onSelectDate={handleDateChange}
           />
         )}
+
+        {/* 睡公園避難倒數 & 附近佔位雷達 (趣味彩蛋小區域) */}
+        <ParkSleepSection />
 
         {/* 錯誤警告條 */}
         {errorMsg && (

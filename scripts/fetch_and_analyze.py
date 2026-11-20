@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -184,15 +185,18 @@ def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
 
         # 若 fast_info 資料齊全且數值有效，以 fast_info 為準（最即時精確）
         if fast_last is not None and fast_prev is not None and fast_prev > 0:
-            close_price = round(float(fast_last), 2)
-            prev_close = round(float(fast_prev), 2)
-            change_percent = round(((close_price - prev_close) / prev_close) * 100, 2)
-            return {
-                "report_date": latest_date,
-                "close_price": close_price,
-                "change_percent": change_percent,
-                "prev_close": prev_close,
-            }
+            f_last = float(fast_last)
+            f_prev = float(fast_prev)
+            if not (math.isnan(f_last) or math.isnan(f_prev)):
+                close_price = round(f_last, 2)
+                prev_close = round(f_prev, 2)
+                change_percent = round(((close_price - prev_close) / prev_close) * 100, 2)
+                return {
+                    "report_date": latest_date,
+                    "close_price": close_price,
+                    "change_percent": change_percent,
+                    "prev_close": prev_close,
+                }
 
         # 備用方案：從 history 清除 NaN 後計算
         valid_hist = hist.dropna(subset=["Close"])
@@ -202,9 +206,15 @@ def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
 
         latest_row = valid_hist.iloc[-1]
         prev_row = valid_hist.iloc[-2]
+        close_raw = float(latest_row["Close"])
+        prev_raw = float(prev_row["Close"])
+        if math.isnan(close_raw) or math.isnan(prev_raw):
+            logger.warning(f"⚠️ {symbol}: 收盤價包含 NaN。")
+            return None
+
         report_date = valid_hist.index[-1].strftime("%Y-%m-%d")
-        close_price = round(float(latest_row["Close"]), 2)
-        prev_close = round(float(prev_row["Close"]), 2)
+        close_price = round(close_raw, 2)
+        prev_close = round(prev_raw, 2)
         change_percent = round(((close_price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
 
         return {
@@ -344,9 +354,13 @@ JSON 格式範例：
             )
 
             response_text = response.text.strip()
-            # 清理可能夾帶的 ```json 標記
-            clean_json_str = re.sub(r"^```(?:json)?\s*", "", response_text, flags=re.MULTILINE)
-            clean_json_str = re.sub(r"```$", "", clean_json_str, flags=re.MULTILINE).strip()
+            # 優先搜尋最外層的 JSON 物件，安全過濾前後說明文字與 markdown 標記
+            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            if json_match:
+                clean_json_str = json_match.group(0).strip()
+            else:
+                clean_json_str = re.sub(r"^```(?:json)?\s*", "", response_text, flags=re.MULTILINE)
+                clean_json_str = re.sub(r"```$", "", clean_json_str, flags=re.MULTILINE).strip()
 
             data = json.loads(clean_json_str)
 
@@ -443,62 +457,71 @@ def main():
             logger.info(f"🧪 測試模式啟動：僅選取前 {len(stocks)} 檔股票進行處理")
 
         for idx, stock in enumerate(stocks, 1):
-            symbol = stock["symbol"]
-            name = stock["name"]
-            market_type = stock["market"]
-            logger.info(f"\n[{idx}/{len(stocks)}] 正在處理: {symbol} ({name}) - {market_type}...")
+            try:
+                symbol = stock.get("symbol", "")
+                name = stock.get("name", symbol)
+                market_type = stock.get("market", m)
+                if not symbol:
+                    logger.warning(f"⏩ 跳過第 {idx} 筆：無效的股票代號")
+                    continue
 
-            total_processed += 1
+                logger.info(f"\n[{idx}/{len(stocks)}] 正在處理: {symbol} ({name}) - {market_type}...")
 
-            # 1. 抓取收盤價與計算漲跌幅
-            price_info = fetch_stock_price(symbol)
-            if not price_info:
-                logger.warning(f"⏩ 跳過 {symbol}：無法取得足夠的行情數據")
+                total_processed += 1
+
+                # 1. 抓取收盤價與計算漲跌幅
+                price_info = fetch_stock_price(symbol)
+                if not price_info:
+                    logger.warning(f"⏩ 跳過 {symbol}：無法取得足夠的行情數據")
+                    continue
+
+                report_date = price_info["report_date"]
+                close_price = price_info["close_price"]
+                change_percent = price_info["change_percent"]
+                logger.info(
+                    f"📈 {symbol} 最新收盤日: {report_date}, 價格: {close_price}, 漲跌幅: {change_percent}%"
+                )
+
+                # 2. 抓取相關新聞
+                news_items = fetch_google_news(symbol, name, market_type, limit=6)
+
+                # 3. 呼叫 Gemini AI 進行新聞摘要與歸納
+                logger.info(f"🤖 正在呼叫 Gemini 模型 ({configs['gemini_model']}) 進行 AI 漲跌故事分析...")
+                ai_analysis = analyze_stock_story(
+                    symbol=symbol,
+                    name=name,
+                    market=market_type,
+                    close_price=close_price,
+                    change_percent=change_percent,
+                    news_list=news_items,
+                    api_key=configs["gemini_api_key"],
+                    model_name=configs["gemini_model"],
+                )
+
+                # 4. 組裝資料並 Upsert 到 Supabase
+                report_record = {
+                    "report_date": report_date,
+                    "market": market_type,
+                    "symbol": symbol,
+                    "name": name,
+                    "close_price": close_price,
+                    "change_percent": change_percent,
+                    "sentiment": ai_analysis["sentiment"],
+                    "headline": ai_analysis["headline"],
+                    "story_bullets": ai_analysis["story_bullets"],
+                    "news_links": news_items,
+                }
+
+                success = upsert_daily_report(supabase_client, report_record)
+                if success:
+                    total_succeeded += 1
+
+                # 稍微延遲避免頻率限制
+                time.sleep(1)
+            except Exception as stock_err:
+                logger.error(f"❌ 處理 {stock.get('symbol', '未知標的')} 時發生未預期例外: {stock_err}，已隔離跳過，不影響其他股票")
+                time.sleep(1)
                 continue
-
-            report_date = price_info["report_date"]
-            close_price = price_info["close_price"]
-            change_percent = price_info["change_percent"]
-            logger.info(
-                f"📈 {symbol} 最新收盤日: {report_date}, 價格: {close_price}, 漲跌幅: {change_percent}%"
-            )
-
-            # 2. 抓取相關新聞
-            news_items = fetch_google_news(symbol, name, market_type, limit=6)
-
-            # 3. 呼叫 Gemini AI 進行新聞摘要與歸納
-            logger.info(f"🤖 正在呼叫 Gemini 模型 ({configs['gemini_model']}) 進行 AI 漲跌故事分析...")
-            ai_analysis = analyze_stock_story(
-                symbol=symbol,
-                name=name,
-                market=market_type,
-                close_price=close_price,
-                change_percent=change_percent,
-                news_list=news_items,
-                api_key=configs["gemini_api_key"],
-                model_name=configs["gemini_model"],
-            )
-
-            # 4. 組裝資料並 Upsert 到 Supabase
-            report_record = {
-                "report_date": report_date,
-                "market": market_type,
-                "symbol": symbol,
-                "name": name,
-                "close_price": close_price,
-                "change_percent": change_percent,
-                "sentiment": ai_analysis["sentiment"],
-                "headline": ai_analysis["headline"],
-                "story_bullets": ai_analysis["story_bullets"],
-                "news_links": news_items,
-            }
-
-            success = upsert_daily_report(supabase_client, report_record)
-            if success:
-                total_succeeded += 1
-
-            # 稍微延遲避免頻率限制
-            time.sleep(1)
 
     logger.info(f"\n==========================================")
     logger.info(

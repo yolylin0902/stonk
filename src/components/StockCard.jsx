@@ -5,21 +5,21 @@ export default function StockCard({ report }) {
   const [isNewsExpanded, setIsNewsExpanded] = useState(false)
 
   const {
-    symbol,
-    name,
-    market,
+    symbol = '',
+    name = '',
+    market = 'US',
     close_price,
     change_percent,
     sentiment,
     headline,
     story_bullets,
     news_links,
-  } = report
+  } = report || {}
 
   const isUS = market === 'US'
-  const isUp = change_percent > 0
-  const isDown = change_percent < 0
-  const isFlat = change_percent === 0
+  const numChangePct = change_percent != null ? Number(change_percent) : null
+  const isUp = numChangePct != null && numChangePct > 0
+  const isDown = numChangePct != null && numChangePct < 0
 
   // 顏色邏輯：美股綠漲紅跌，台股紅漲綠跌 (降彩度霧面版)
   let trendTextColor = 'text-white/45'
@@ -58,19 +58,23 @@ export default function StockCard({ report }) {
     ? `${change_percent > 0 ? '+' : ''}${change_percent}%`
     : null
 
-  // story_bullets
-  const bullets = Array.isArray(story_bullets)
-    ? story_bullets
-    : typeof story_bullets === 'string'
-    ? JSON.parse(story_bullets || '[]')
-    : []
+  // 安全解析陣列或 JSON 字串，避免非法格式字串導致整頁崩潰
+  const parseSafeArray = (val) => {
+    if (!val) return []
+    if (Array.isArray(val)) return val
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val)
+        return Array.isArray(parsed) ? parsed : []
+      } catch {
+        return val.trim() ? [val] : []
+      }
+    }
+    return []
+  }
 
-  // news_links
-  const news = Array.isArray(news_links)
-    ? news_links
-    : typeof news_links === 'string'
-    ? JSON.parse(news_links || '[]')
-    : []
+  const bullets = parseSafeArray(story_bullets)
+  const news = parseSafeArray(news_links)
 
   return (
     <article className="ios-glass rounded-[28px] p-5 transition-all duration-150 ease-out active:scale-[0.995]">

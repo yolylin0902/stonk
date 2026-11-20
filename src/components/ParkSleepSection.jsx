@@ -154,7 +154,6 @@ export default function ParkSleepSection() {
   const [userLocation, setUserLocation] = useState(null)
   const [userDistrict, setUserDistrict] = useState('')
   const [isScanning, setIsScanning] = useState(false)
-  const [scanStatus, setScanStatus] = useState('idle') // 'idle' | 'success' | 'denied' | 'error'
   const [analyzedParks, setAnalyzedParks] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
 
@@ -176,7 +175,6 @@ export default function ParkSleepSection() {
   // 核心功能：一鍵自動分析周邊步行可達公園 (無需手動跳轉，頁面內直接完成)
   const handleAutoScanNearbyParks = () => {
     if (!navigator.geolocation) {
-      setScanStatus('denied')
       setStatusMessage('瀏覽器不支援 GPS 定位，請使用下方輸入框手動輸入地點分析。')
       return
     }
@@ -265,7 +263,6 @@ export default function ParkSleepSection() {
               .sort((a, b) => a.distance - b.distance)
 
             setAnalyzedParks(formatted)
-            setScanStatus('success')
             setStatusMessage(`已為您自動分析周邊 ${formatted.length} 處步行可達之公園與綠地！`)
           } else {
             // 若 1.2km 內無登記之密集公園，平滑回退並計算代表性公園距離
@@ -281,7 +278,6 @@ export default function ParkSleepSection() {
       (err) => {
         console.warn('定位失敗:', err.message)
         setIsScanning(false)
-        setScanStatus('denied')
         setStatusMessage('未取得 GPS 定位權限。您可在下方直接輸入地區或里名進行自動分析。')
       },
       { timeout: 9000, enableHighAccuracy: false }
@@ -308,7 +304,6 @@ export default function ParkSleepSection() {
     }
 
     setAnalyzedParks(list)
-    setScanStatus('success')
     setStatusMessage('已分析距離您最近之知名公園與休憩綠地！')
   }
 
@@ -380,7 +375,6 @@ export default function ParkSleepSection() {
       }
 
       setAnalyzedParks(formatted)
-      setScanStatus('success')
       setStatusMessage(`已成功為您分析 ${formatted.length} 處符合「${q}」之休閒公園！`)
     } catch (err) {
       console.error('自訂搜尋失敗:', err)

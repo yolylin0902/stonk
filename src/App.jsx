@@ -30,7 +30,6 @@ export const isMarketIndex = (symbol) => {
 export default function App() {
   const [market, setMarket] = useState('US') // 'US' or 'TW'
   const [reports, setReports] = useState([])
-  const [allDateReports, setAllDateReports] = useState([])
   const [availableDates, setAvailableDates] = useState([])
   const [selectedDate, setSelectedDate] = useState('')
   const [loading, setLoading] = useState(true)
@@ -138,9 +137,6 @@ export default function App() {
         allQuery = allQuery.eq('report_date', targetDate)
       }
       const { data: allData } = await allQuery
-      if (allData) {
-        setAllDateReports(allData)
-      }
 
       // 取得自選股表以確保使用者新加入的個股 (如 SMCI) 即使尚未爬蟲也能顯示
       const { data: watchData } = await supabase.from('watchlist').select('*')
@@ -164,11 +160,11 @@ export default function App() {
           close_price: null,
           change_percent: null,
           sentiment: '中性',
-          headline: '⚡ AI 即時分析中，正在抓取最新盤勢與新聞...',
+          headline: '即時分析中，正在抓取最新行情與新聞...',
           story_bullets: [
             '已成功將此標的加入自選追蹤，後端同步守護程序已自動響應。',
             '正在透過金融數據源抓取最新交易日價格與漲跌幅。',
-            'Gemini AI 正在爬梳即時新聞並歸納關鍵驅動原因，完成後自動呈現。'
+            '正在爬梳即時新聞並歸納關鍵驅動原因，完成後自動呈現。'
           ],
           news_links: [],
           isPending: true

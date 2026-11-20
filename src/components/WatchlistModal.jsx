@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { X, Plus, Trash2, AlertCircle, Check, Loader2, CheckSquare, Square, Search } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
@@ -100,13 +100,13 @@ export default function WatchlistModal({
       setIsSubmitting(true)
       setFeedback({ type: '', message: '' })
 
-      const { data, error } = await supabase.from('watchlist').insert([
+      const { error } = await supabase.from('watchlist').insert([
         {
           symbol: cleanSymbol,
           name: cleanName,
           market: cleanMarket,
         },
-      ]).select()
+      ])
 
       if (error) {
         if (error.code === '23505') {

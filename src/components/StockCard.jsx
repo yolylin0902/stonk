@@ -56,7 +56,7 @@ export class StockCardErrorBoundary extends Component {
   }
 }
 
-function StockCardContent({ report, onRemove }) {
+function StockCardContent({ report, onRemove, liveQuote }) {
   const [isNewsExpanded, setIsNewsExpanded] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const timerRef = useRef(null)
@@ -77,7 +77,47 @@ function StockCardContent({ report, onRemove }) {
     headline,
     story_bullets,
     news_links,
+    report_date,
+    isPending,
   } = report || {}
+
+  // 判斷是否顯示盤中即時報價疊加層（不更動既有收盤報告，僅在盤中/最新交易時段視覺疊加）
+  let isLiveOverlay = false
+  let liveTagLabel = ''
+  let displayPrice = close_price
+  let displayChangePct = change_percent
+
+  if (liveQuote && !isPending) {
+    const hasValidLivePrice = Number.isFinite(Number(liveQuote.price))
+    const hasValidLiveChange = Number.isFinite(Number(liveQuote.change_percent))
+
+    if (hasValidLivePrice && hasValidLiveChange) {
+      const state = (liveQuote.market_state || '').toUpperCase()
+      const quoteDateStr = liveQuote.market_time
+        ? new Date(liveQuote.market_time * 1000).toISOString().split('T')[0]
+        : null
+      const isDateNewer = Boolean(quoteDateStr && report_date && quoteDateStr > report_date)
+
+      if (state === 'REGULAR') {
+        isLiveOverlay = true
+        liveTagLabel = '盤中即時'
+      } else if (state === 'PRE') {
+        isLiveOverlay = true
+        liveTagLabel = '盤前'
+      } else if (state === 'POST') {
+        isLiveOverlay = true
+        liveTagLabel = '盤後'
+      } else if (isDateNewer) {
+        isLiveOverlay = true
+        liveTagLabel = '最新'
+      }
+
+      if (isLiveOverlay) {
+        displayPrice = liveQuote.price
+        displayChangePct = liveQuote.change_percent
+      }
+    }
+  }
 
   const handleDeleteClick = (e) => {
     e.stopPropagation()
@@ -96,8 +136,8 @@ function StockCardContent({ report, onRemove }) {
   }
 
   const isUS = market === 'US'
-  const numClose = close_price != null && Number.isFinite(Number(close_price)) ? Number(close_price) : null
-  const numChangePct = change_percent != null && Number.isFinite(Number(change_percent)) ? Number(change_percent) : null
+  const numClose = displayPrice != null && Number.isFinite(Number(displayPrice)) ? Number(displayPrice) : null
+  const numChangePct = displayChangePct != null && Number.isFinite(Number(displayChangePct)) ? Number(displayChangePct) : null
   const isUp = numChangePct != null && numChangePct > 0
   const isDown = numChangePct != null && numChangePct < 0
 
@@ -199,8 +239,18 @@ function StockCardContent({ report, onRemove }) {
           <div className="text-right">
             {formattedPrice != null ? (
               <>
-                <div className={`text-[22px] font-semibold tracking-tight tabular ${trendTextColor}`}>
-                  {formattedPrice}
+                <div className="flex items-center justify-end space-x-1.5">
+                  {isLiveOverlay && liveTagLabel && (
+                    <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-white/[0.08] border border-white/[0.10] text-[10px] text-white/70 font-medium tracking-tight select-none">
+                      {liveTagLabel === '盤中即時' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      )}
+                      <span>{liveTagLabel}</span>
+                    </span>
+                  )}
+                  <span className={`text-[22px] font-semibold tracking-tight tabular ${trendTextColor}`}>
+                    {formattedPrice}
+                  </span>
                 </div>
                 <div className="mt-1 flex justify-end">
                   {changePctText && (

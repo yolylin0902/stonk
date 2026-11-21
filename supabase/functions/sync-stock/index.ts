@@ -9,19 +9,24 @@ const corsHeaders = {
 };
 
 interface SyncRequest {
-  symbol: string;
+  mode?: "full" | "quote_only";
+  symbols?: string[];
+  symbol?: string;
   name?: string;
   market?: "US" | "TW";
 }
 
 interface PriceResult {
+  symbol: string;
   resolvedSymbol: string;
-  closePrice: number;
-  changePercent: number;
+  price: number;
+  change_percent: number;
+  market_state: string; // 'REGULAR' | 'PRE' | 'POST' | 'CLOSED'
+  market_time: number;  // epoch seconds
   shortName?: string;
 }
 
-// 輔助函式：從 Yahoo Finance 抓取股價與漲跌幅（支援 query2 與 query1）
+// 輔助函式：從 Yahoo Finance 抓取即時報價與市場狀態（支援 query2 與 query1）
 async function fetchYahooPrice(symbol: string): Promise<PriceResult | null> {
   const userAgent =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -62,10 +67,33 @@ async function fetchYahooPrice(symbol: string): Promise<PriceResult | null> {
         }
       }
 
+      // 判斷市場狀態 (REGULAR / PRE / POST / CLOSED)
+      let marketState = "CLOSED";
+      if (meta?.marketState) {
+        marketState = String(meta.marketState).toUpperCase();
+      } else {
+        const now = Math.floor(Date.now() / 1000);
+        const period = meta?.currentTradingPeriod;
+        if (period) {
+          if (period.regular && now >= period.regular.start && now < period.regular.end) {
+            marketState = "REGULAR";
+          } else if (period.pre && now >= period.pre.start && now < period.pre.end) {
+            marketState = "PRE";
+          } else if (period.post && now >= period.post.start && now < period.post.end) {
+            marketState = "POST";
+          }
+        }
+      }
+
+      const marketTime = Number(meta?.regularMarketTime) || Math.floor(Date.now() / 1000);
+
       return {
+        symbol,
         resolvedSymbol: symbol,
-        closePrice: Math.round(Number(regularMarketPrice) * 100) / 100,
-        changePercent: Math.round(changePercent * 100) / 100,
+        price: Math.round(Number(regularMarketPrice) * 100) / 100,
+        change_percent: Math.round(changePercent * 100) / 100,
+        market_state: marketState,
+        market_time: marketTime,
         shortName: meta?.shortName || undefined,
       };
     } catch (e) {
@@ -244,6 +272,72 @@ Deno.serve(async (req) => {
     }
 
     const body: SyncRequest = await req.json();
+
+    // ─────────────────────────────────────────────────────────────────
+    // 模式 A：純即時報價模式 (quote_only)
+    // 專供盤中多檔並行抓價，純記憶體運算，絕不寫入資料庫、不抓新聞、不呼叫 Gemini
+    // ─────────────────────────────────────────────────────────────────
+    if (body.mode === "quote_only") {
+      const symbolsToFetch = Array.isArray(body.symbols) && body.symbols.length > 0
+        ? body.symbols
+        : (body.symbol ? [body.symbol] : []);
+
+      if (symbolsToFetch.length === 0) {
+        return new Response(JSON.stringify({ status: "success", quotes: {} }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // 並行向 Yahoo Finance 請求所有標的即時價格
+      const quoteResults = await Promise.all(
+        symbolsToFetch.map(async (sym) => {
+          try {
+            const clean = sym.trim();
+            if (!clean) return null;
+            let info = await fetchYahooPrice(clean);
+            if (!info && clean.endsWith(".TW")) {
+              info = await fetchYahooPrice(clean.replace(/\.TW$/, ".TWO"));
+            }
+            if (!info) return null;
+            return { originalSymbol: clean, info };
+          } catch (e) {
+            console.warn(`Failed to fetch quote for ${sym}:`, e);
+            return null;
+          }
+        })
+      );
+
+      const quotesMap: Record<
+        string,
+        { price: number; change_percent: number; market_state: string; market_time: number }
+      > = {};
+
+      for (const res of quoteResults) {
+        if (res && res.info) {
+          const item = {
+            price: res.info.price,
+            change_percent: res.info.change_percent,
+            market_state: res.info.market_state,
+            market_time: res.info.market_time,
+          };
+          quotesMap[res.originalSymbol] = item;
+          if (res.info.resolvedSymbol && res.info.resolvedSymbol !== res.originalSymbol) {
+            quotesMap[res.info.resolvedSymbol] = item;
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({ status: "success", quotes: quotesMap }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 模式 B：完整新增同步模式 (full)
+    // 兩階段寫入資料庫 + Google News + Gemini 故事分析
+    // ─────────────────────────────────────────────────────────────────
     let symbol = (body.symbol || "").trim();
     let name = (body.name || "").trim() || symbol;
     const market = body.market || (symbol.includes(".TW") || /^\d{4,6}/.test(symbol) ? "TW" : "US");
@@ -274,7 +368,6 @@ Deno.serve(async (req) => {
       const altSymbol = symbol.replace(/\.TW$/, ".TWO");
       priceInfo = await fetchYahooPrice(altSymbol);
       if (priceInfo) {
-        // 更新 symbol 為精確的 .TWO
         symbol = altSymbol;
       }
     }
@@ -307,7 +400,6 @@ Deno.serve(async (req) => {
     // 若有 shortName 且原 name === symbol，更新名稱
     if (priceInfo.shortName && (name === symbol || !name)) {
       name = priceInfo.shortName;
-      // 順便同步回更新 watchlist 中的名稱
       try {
         await adminClient.from("watchlist").update({ name }).eq("symbol", symbol);
       } catch (_) {}
@@ -319,12 +411,12 @@ Deno.serve(async (req) => {
       market: market,
       symbol: symbol,
       name: name,
-      close_price: priceInfo.closePrice,
-      change_percent: priceInfo.changePercent,
-      sentiment: priceInfo.changePercent > 0.5 ? "利多" : (priceInfo.changePercent < -0.5 ? "利空" : "中性"),
+      close_price: priceInfo.price,
+      change_percent: priceInfo.change_percent,
+      sentiment: priceInfo.change_percent > 0.5 ? "利多" : (priceInfo.change_percent < -0.5 ? "利空" : "中性"),
       headline: "已同步最新報價，AI 新聞分析整理中...",
       story_bullets: [
-        `已取得最新交易資訊：價格 ${priceInfo.closePrice}，漲跌幅 ${priceInfo.changePercent > 0 ? "+" : ""}${priceInfo.changePercent}%。`,
+        `已取得最新交易資訊：價格 ${priceInfo.price}，漲跌幅 ${priceInfo.change_percent > 0 ? "+" : ""}${priceInfo.change_percent}%。`,
         "系統正同步擷取關鍵市場新聞並交由 AI 產生深度盤後重點...",
       ],
       news_links: [],
@@ -339,8 +431,8 @@ Deno.serve(async (req) => {
         symbol,
         name,
         market,
-        priceInfo.closePrice,
-        priceInfo.changePercent,
+        priceInfo.price,
+        priceInfo.change_percent,
         newsItems,
         geminiApiKey
       );
@@ -353,8 +445,8 @@ Deno.serve(async (req) => {
         market: market,
         symbol: symbol,
         name: name,
-        close_price: priceInfo.closePrice,
-        change_percent: priceInfo.changePercent,
+        close_price: priceInfo.price,
+        change_percent: priceInfo.change_percent,
         sentiment: aiResult.sentiment,
         headline: aiResult.headline,
         story_bullets: aiResult.story_bullets,
@@ -362,16 +454,15 @@ Deno.serve(async (req) => {
       };
       await adminClient.from("daily_reports").upsert(phase2Record, { onConflict: "report_date,symbol" });
     } else if (newsItems.length > 0) {
-      // 若 AI 未產出但有新聞，使用新聞標題作為條列
       const fallbackPhase2 = {
         report_date: reportDate,
         market: market,
         symbol: symbol,
         name: name,
-        close_price: priceInfo.closePrice,
-        change_percent: priceInfo.changePercent,
-        sentiment: priceInfo.changePercent > 0.5 ? "利多" : (priceInfo.changePercent < -0.5 ? "利空" : "中性"),
-        headline: newsItems[0]?.title || `最新行情收盤於 ${priceInfo.closePrice}`,
+        close_price: priceInfo.price,
+        change_percent: priceInfo.change_percent,
+        sentiment: priceInfo.change_percent > 0.5 ? "利多" : (priceInfo.change_percent < -0.5 ? "利空" : "中性"),
+        headline: newsItems[0]?.title || `最新行情收盤於 ${priceInfo.price}`,
         story_bullets: newsItems.slice(0, 3).map((n) => n.title),
         news_links: newsItems,
       };
@@ -384,8 +475,8 @@ Deno.serve(async (req) => {
         symbol,
         market,
         report_date: reportDate,
-        close_price: priceInfo.closePrice,
-        change_percent: priceInfo.changePercent,
+        close_price: priceInfo.price,
+        change_percent: priceInfo.change_percent,
       }),
       {
         status: 200,

@@ -48,6 +48,17 @@ export default function App() {
   const [pollTimedOut, setPollTimedOut] = useState(false)
   const availableDatesRef = useRef([])
   availableDatesRef.current = availableDates
+  const reportsRef = useRef([])
+  reportsRef.current = reports
+
+  // 盤中即時報價獨立暫存狀態（純記憶體疊加，不覆蓋資料庫收盤日報）
+  const [liveQuotes, setLiveQuotes] = useState({})
+  const lastFetchLiveQuotesRef = useRef(0)
+
+  // 判斷是否正在檢視該市場最新日期（歷史日期檢視下一律看收盤日報）
+  const isViewingLatestDate = useMemo(() => {
+    return !selectedDate || (availableDates.length > 0 && selectedDate === availableDates[0])
+  }, [selectedDate, availableDates])
 
   // 檢視模式：自選個股 (STOCKS) 或 主要指數 (INDEX)
   const [cardViewMode, setCardViewMode] = useState('STOCKS')
@@ -341,7 +352,53 @@ export default function App() {
     await loadReports(market, newDate)
   }
 
-  // 手動重新整理
+  // 背景獲取當前市場之盤中即時報價（mode: 'quote_only'，純記憶體運算，不寫入資料庫）
+  const fetchLiveQuotes = useCallback(
+    async (targetMarket, force = false) => {
+      if (!session?.user) return
+      const now = Date.now()
+      if (!force && now - lastFetchLiveQuotesRef.current < 15000) {
+        return // 15 秒防連點節流
+      }
+      lastFetchLiveQuotesRef.current = now
+
+      try {
+        const indexSymbols =
+          targetMarket === 'TW'
+            ? ['^TWII', '^TWOII']
+            : ['^GSPC', '^IXIC', '^SOX', '^DJI']
+
+        const currentReports = reportsRef.current || []
+        const stockSymbols = currentReports
+          .filter((r) => r.market === targetMarket)
+          .map((r) => r.symbol)
+
+        const symbols = Array.from(
+          new Set([...indexSymbols, ...stockSymbols])
+        )
+
+        if (symbols.length === 0) return
+
+        const { data, error } = await supabase.functions.invoke('sync-stock', {
+          body: { mode: 'quote_only', symbols },
+        })
+
+        if (error) {
+          console.warn('獲取盤中即時報價略過:', error)
+          return
+        }
+
+        if (data?.quotes) {
+          setLiveQuotes((prev) => ({ ...prev, ...data.quotes }))
+        }
+      } catch (err) {
+        console.warn('背景更新盤中報價略過:', err)
+      }
+    },
+    [session]
+  )
+
+  // 手動重新整理（同時刷新收盤日報與盤中即時行情）
   const handleRefresh = async () => {
     setRefreshing(true)
     pollCountRef.current = 0
@@ -349,7 +406,11 @@ export default function App() {
     setPollTimedOut(false)
     const latestDate = await loadAvailableDates(market)
     const targetDate = selectedDate || latestDate
-    await loadReports(market, targetDate, true)
+    await Promise.allSettled([
+      loadReports(market, targetDate, true),
+      fetchLiveQuotes(market, true),
+    ])
+    setRefreshing(false)
   }
 
   // 登入後初始加載
@@ -361,6 +422,29 @@ export default function App() {
     }
     init()
   }, [session, loadAvailableDates, loadReports])
+
+  // 切換市場或報告載入後，靜默同步最新盤中行情
+  useEffect(() => {
+    if (session?.user && reports.length > 0) {
+      fetchLiveQuotes(market, false)
+    }
+  }, [market, session, reports.length > 0, fetchLiveQuotes])
+
+  // PWA 從背景回到前景時（且距離上次大於 60 秒），背景靜默刷新盤中即時行情
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now()
+        if (now - lastFetchLiveQuotesRef.current > 60000) {
+          fetchLiveQuotes(market, true)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [market, fetchLiveQuotes])
 
   // 穩定的待分析個股 Key，避免 reports 物件頻繁異動造成重複觸發
   const pendingKey = useMemo(() => {
@@ -779,7 +863,11 @@ export default function App() {
                           <div className="space-y-3">
                             <AnimatePresence mode="popLayout" initial={false}>
                               {indexReports.map((report) => (
-                                <StockCard key={report.symbol} report={report} />
+                                <StockCard
+                                  key={report.symbol}
+                                  report={report}
+                                  liveQuote={isViewingLatestDate ? liveQuotes[report.symbol] : null}
+                                />
                               ))}
                             </AnimatePresence>
                           </div>
@@ -813,6 +901,7 @@ export default function App() {
                                 key={report.symbol}
                                 report={report}
                                 onRemove={handleRemoveStock}
+                                liveQuote={isViewingLatestDate ? liveQuotes[report.symbol] : null}
                               />
                             ))}
                           </AnimatePresence>

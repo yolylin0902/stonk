@@ -152,6 +152,24 @@ async function fetchGoogleNews(symbol: string, name: string, market: string): Pr
 }
 
 // 輔助函式：呼叫 Gemini 進行故事分析（保證回傳純 JSON，支援無新聞保底分析）
+interface AnalysisResult {
+  chinese_name?: string;
+  sentiment: string;
+  headline: string;
+  story_bullets: string[];
+}
+
+function isStrictlyChinese(text: string): boolean {
+  if (!text) return false;
+  const chineseChars = text.match(/[\u4e00-\u9fa5]/g) || [];
+  if (chineseChars.length < 4) return false;
+  // 不能包含 4 個以上連續英文單字（判定為未翻譯的英文句子）
+  if (/[a-zA-Z]{2,}\s+[a-zA-Z]{2,}\s+[a-zA-Z]{2,}\s+[a-zA-Z]{2,}/.test(text)) {
+    return false;
+  }
+  return true;
+}
+
 async function analyzeWithGemini(
   symbol: string,
   name: string,
@@ -160,7 +178,7 @@ async function analyzeWithGemini(
   changePercent: number,
   newsItems: Array<{ title: string; link: string }>,
   apiKey: string
-): Promise<{ sentiment: string; headline: string; story_bullets: string[] } | null> {
+): Promise<AnalysisResult | null> {
   if (!apiKey) {
     console.warn("analyzeWithGemini: No GEMINI_API_KEY provided");
     return null;
@@ -172,7 +190,8 @@ async function analyzeWithGemini(
     : (changePercent < 0 ? `下跌 ${Math.abs(changePercent)}%` : "持平 0.0%");
 
   const prompt = `你是一位專業且客觀的股市分析師。請針對以下股票最新交易日行情與焦點新聞，進行精簡扼要的盤後焦點分析。
-股票名稱：${name} (${symbol})
+股票代號：${symbol}
+原始名稱：${name}
 所屬市場：${market === "TW" ? "台股" : "美股"}
 最新收盤價：${closePrice}
 最新漲跌幅：${trend}
@@ -181,17 +200,19 @@ async function analyzeWithGemini(
 ${newsSummary || "（目前查無最新即時新聞，請根據該股所屬產業地位、市場大盤整體氛圍與今日漲跌幅客觀綜述）"}
 
 請嚴格輸出純 JSON 格式（絕對不要使用 Markdown 標籤如 \`\`\`json，直接輸出合法 JSON 物件），欄位規範如下：
-1. "sentiment": 僅能為 "利多"、"利空" 或 "中性"（字串）。
-2. "headline": 20 字以內的繁體中文精闢總結 headline（說明今日漲跌或市場核心主因；無論新聞為何種語言，一律以道地繁體中文呈現，嚴禁殘留英文標題）。
-3. "story_bullets": 2 到 3 點繁體中文重點條列（陣列字串），每點 30~50 字，依序說明：
+1. "chinese_name": 該股票的繁體中文簡潔名稱（例如："安謀"、"帕蘭提爾"、"好市多"、"特斯拉"、"迪士尼"、"火箭實驗室"；若無通用中文譯名則為知名品牌名加中文領域如 "CrowdStrike (資安)"）。
+2. "sentiment": 僅能為 "利多"、"利空" 或 "中性"（字串）。
+3. "headline": 20 字以內的繁體中文精闢總結 headline（說明今日漲跌或市場核心主因；無論新聞為何種語言，一律以道地繁體中文呈現，嚴禁殘留任何英文標題或英文句子）。
+4. "story_bullets": 2 到 3 點繁體中文重點條列（陣列字串），每點 30~50 字，依序說明：
    - 核心驅動事件、產業趨勢或大盤氛圍。
    - 技術面、評價面或法人資金動向。
    - 後續應留意的觀察關鍵指標。
    （特別注意：若輸入之新聞為英文，務必完整翻譯並精準編譯為客觀繁體中文重點，絕對不可出現未翻譯之英文句子或英文標籤）。
-4. 嚴格禁止使用任何 Emoji 表情符號（如 📈、📉、🚀、⚠️、🔥 等）。
+5. 嚴格禁止使用任何 Emoji 表情符號（如 📈、📉、🚀、⚠️、🔥 等）。
 
 輸出範例格式：
 {
+  "chinese_name": "超微半導體",
   "sentiment": "利多",
   "headline": "AI伺服器拉貨動能強勁，營收創高激勵股價突破",
   "story_bullets": [
@@ -231,8 +252,15 @@ ${newsSummary || "（目前查無最新即時新聞，請根據該股所屬產�
       rawText = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
 
       const parsed = JSON.parse(rawText);
-      if (parsed && parsed.headline && Array.isArray(parsed.story_bullets)) {
+      if (
+        parsed &&
+        parsed.headline &&
+        Array.isArray(parsed.story_bullets) &&
+        isStrictlyChinese(parsed.headline) &&
+        parsed.story_bullets.every((b: any) => isStrictlyChinese(String(b)))
+      ) {
         return {
+          chinese_name: parsed.chinese_name ? String(parsed.chinese_name).trim() : undefined,
           sentiment: ["利多", "利空", "中性"].includes(parsed.sentiment)
             ? parsed.sentiment
             : (changePercent > 0.5 ? "利多" : (changePercent < -0.5 ? "利空" : "中性")),
@@ -463,6 +491,15 @@ Deno.serve(async (req) => {
 
     // 關鍵保底：若 AI 成功則寫入 AI 結果；若 AI 未回傳則產生全繁體中文行情保底，絕不輸出未翻譯的英文新聞標題
     if (aiResult) {
+      // 若 AI 提供繁體中文標準名稱，且目前名稱為代號或純英文，主動升級為中文友善名稱
+      if (aiResult.chinese_name && (name === symbol || !/[\u4e00-\u9fa5]/.test(name))) {
+        const cleanCn = aiResult.chinese_name.trim();
+        name = cleanCn.includes(symbol) ? cleanCn : `${cleanCn} (${symbol})`;
+        try {
+          await adminClient.from("watchlist").update({ name }).eq("symbol", symbol);
+        } catch (_) {}
+      }
+
       const phase2Record = {
         report_date: reportDate,
         market: market,

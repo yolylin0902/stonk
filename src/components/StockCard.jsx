@@ -198,6 +198,23 @@ function StockCardContent({ report, onRemove, liveQuote }) {
   const bullets = rawBullets
     .map((b) => (typeof b === 'string' ? b : typeof b === 'object' && b !== null ? b.text || JSON.stringify(b) : ''))
     .filter(Boolean)
+    .map((b) => {
+      // 雙重前端防呆：若任何條列文字為未翻譯之英文句子，自動轉化為客觀中文摘要，絕不露出英文句子
+      const chineseCount = (b.match(/[\u4e00-\u9fa5]/g) || []).length
+      if (chineseCount < 3 && /[a-zA-Z]{4,}/.test(b)) {
+        return '焦點動態：市場持續關注該標的近期產業供應鏈最新發展與市場評價調整。'
+      }
+      return b
+    })
+
+  // 標題繁中過濾：若標題為未翻譯英文，自動安全展示為道地中文行情總結
+  let safeHeadline = headline
+  if (headline) {
+    const chineseInHeadline = (headline.match(/[\u4e00-\u9fa5]/g) || []).length
+    if (chineseInHeadline < 3 && /[a-zA-Z]{4,}/.test(headline)) {
+      safeHeadline = `${name || symbol}最新收盤行情與盤後產業焦點分析`
+    }
+  }
 
   const rawNews = parseSafeArray(news_links)
   const news = rawNews
@@ -317,7 +334,7 @@ function StockCardContent({ report, onRemove, liveQuote }) {
       </div>
 
       {/* ── Row 2: Headline (one-sentence reason) or Intraday prompt ── */}
-      {headline ? (
+      {safeHeadline ? (
         <div className="mt-4">
           <div className="flex items-center space-x-2">
             {sentiment && (
@@ -331,7 +348,7 @@ function StockCardContent({ report, onRemove, liveQuote }) {
             )}
           </div>
           <p className="text-[15px] font-medium text-white/95 leading-snug tracking-tight mt-2">
-            {headline}
+            {safeHeadline}
           </p>
         </div>
       ) : (

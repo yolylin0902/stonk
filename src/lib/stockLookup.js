@@ -1,4 +1,5 @@
 import stockData from './stockDirectory.json'
+import twStocksData from '../data/twStocks.json'
 
 // 常見台美股別名與中英文快捷對照表（保證最頂級熱門股第一時間秒中）
 const COMMON_ALIASES = {
@@ -37,6 +38,10 @@ const COMMON_ALIASES = {
   '台積電': { symbol: '2330.TW', name: '台積電', market: 'TW' },
   '台積': { symbol: '2330.TW', name: '台積電', market: 'TW' },
   '2330': { symbol: '2330.TW', name: '台積電', market: 'TW' },
+  '元太': { symbol: '8069.TWO', name: '元太', market: 'TW' },
+  '8069': { symbol: '8069.TWO', name: '元太', market: 'TW' },
+  '群聯': { symbol: '8299.TWO', name: '群聯', market: 'TW' },
+  '8299': { symbol: '8299.TWO', name: '群聯', market: 'TW' },
   '聯發科': { symbol: '2454.TW', name: '聯發科', market: 'TW' },
   '發哥': { symbol: '2454.TW', name: '聯發科', market: 'TW' },
   '2454': { symbol: '2454.TW', name: '聯發科', market: 'TW' },
@@ -65,7 +70,8 @@ const COMMON_ALIASES = {
 
 /**
  * 雙向股票搜尋（代號 ⇄ 中英文關鍵字）
- * @param {string} rawQuery - 輸入文字（代號或關鍵字，如 'google', '聯發科', 'smci', '2330'）
+ * 完整涵蓋全台灣上市 (TWSE) 與上櫃 (TPEX) 2,800+ 檔標的，及美股核心標的
+ * @param {string} rawQuery - 輸入文字（代號或關鍵字，如 'google', '聯發科', '8069', '元太'）
  * @param {number} limit - 最大建議筆數
  * @returns {Array<{ symbol: string, name: string, market: 'US' | 'TW' }>}
  */
@@ -99,41 +105,43 @@ export function searchStocksTwoWay(rawQuery, limit = 8) {
     }
   }
 
-  // 2. 搜尋台股 (TW)
-  for (const [sym, name] of Object.entries(stockData.TW)) {
-    const lowerName = name.toLowerCase()
-    const cleanSym = sym.includes('.') ? sym : sym + '.TW'
-    const baseCode = sym.replace(/\.TW|\.TWO/g, '')
+  // 2. 搜尋全台股清單（官方 2,800+ 檔上市 .TW 與上櫃 .TWO 精確匹配）
+  if (twStocksData && typeof twStocksData === 'object') {
+    for (const item of Object.values(twStocksData)) {
+      const code = item.code || ''
+      const name = item.name || ''
+      const sym = item.symbol || ''
+      const lowerName = name.toLowerCase()
 
-    // 排除長度超過 5 的權證等衍生性商品干擾，優先展示本股
-    const isWarrant = baseCode.length >= 6
+      const isExact = code === upperQ || sym.toUpperCase() === upperQ || name === clean
+      const isStart = code.startsWith(upperQ) || sym.toUpperCase().startsWith(upperQ) || lowerName.startsWith(q)
+      const isInclude = code.includes(upperQ) || lowerName.includes(q)
 
-    const isExact = sym.toUpperCase() === upperQ || baseCode === upperQ || name === clean
-    const isStart = sym.toUpperCase().startsWith(upperQ) || baseCode.startsWith(upperQ) || lowerName.startsWith(q)
-    const isInclude = sym.toLowerCase().includes(q) || lowerName.includes(q)
-
-    if (isExact) {
-      addResult(exactMatches, { symbol: cleanSym, name, market: 'TW' })
-    } else if (isStart && !isWarrant) {
-      addResult(startMatches, { symbol: cleanSym, name, market: 'TW' })
-    } else if (isInclude && !isWarrant) {
-      addResult(includeMatches, { symbol: cleanSym, name, market: 'TW' })
+      if (isExact) {
+        addResult(exactMatches, { symbol: sym, name, market: 'TW' })
+      } else if (isStart) {
+        addResult(startMatches, { symbol: sym, name, market: 'TW' })
+      } else if (isInclude) {
+        addResult(includeMatches, { symbol: sym, name, market: 'TW' })
+      }
     }
   }
 
   // 3. 搜尋美股 (US)
-  for (const [sym, name] of Object.entries(stockData.US)) {
-    const lowerName = name.toLowerCase()
-    const isExact = sym.toUpperCase() === upperQ || name === clean
-    const isStart = sym.toUpperCase().startsWith(upperQ) || lowerName.startsWith(q)
-    const isInclude = sym.toLowerCase().includes(q) || lowerName.includes(q)
+  if (stockData?.US) {
+    for (const [sym, name] of Object.entries(stockData.US)) {
+      const lowerName = name.toLowerCase()
+      const isExact = sym.toUpperCase() === upperQ || name === clean
+      const isStart = sym.toUpperCase().startsWith(upperQ) || lowerName.startsWith(q)
+      const isInclude = sym.toLowerCase().includes(q) || lowerName.includes(q)
 
-    if (isExact) {
-      addResult(exactMatches, { symbol: sym, name, market: 'US' })
-    } else if (isStart) {
-      addResult(startMatches, { symbol: sym, name, market: 'US' })
-    } else if (isInclude) {
-      addResult(includeMatches, { symbol: sym, name, market: 'US' })
+      if (isExact) {
+        addResult(exactMatches, { symbol: sym, name, market: 'US' })
+      } else if (isStart) {
+        addResult(startMatches, { symbol: sym, name, market: 'US' })
+      } else if (isInclude) {
+        addResult(includeMatches, { symbol: sym, name, market: 'US' })
+      }
     }
   }
 
@@ -155,7 +163,7 @@ export function autoLookupStock(rawInput) {
     clean = clean.replace('.', '-')
   }
 
-  // 1. 先用雙向搜尋找最佳已知結果
+  // 1. 先用雙向搜尋找最佳已知結果（包含全台股上市上櫃）
   const searchResults = searchStocksTwoWay(rawInput, 1)
   if (searchResults.length > 0) {
     return searchResults[0]
@@ -171,7 +179,7 @@ export function autoLookupStock(rawInput) {
     }
   }
 
-  // 3. 若為美股代號 (支援一般英文字母或含連字號如 BRK-B)
+  // 3. 若為美股代號 (支援一般英文字母或含連字號如 BRK-B、RKLB、ASTS)
   if (/^[A-Z0-9\-]{1,8}$/.test(clean)) {
     return {
       symbol: clean,

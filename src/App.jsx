@@ -44,7 +44,10 @@ export default function App() {
 
   // 待分析個股的計數器與超時狀態
   const pollCountRef = useRef(0)
+  const pollTimedOutRef = useRef(false)
   const [pollTimedOut, setPollTimedOut] = useState(false)
+  const availableDatesRef = useRef([])
+  availableDatesRef.current = availableDates
 
   // 檢視模式：自選個股 (STOCKS) 或 主要指數 (INDEX)
   const [cardViewMode, setCardViewMode] = useState('STOCKS')
@@ -185,14 +188,72 @@ export default function App() {
         (w) => w.market === targetMarket
       )
 
+      const foundMap = new Map()
+      for (const r of allData || []) {
+        if (r.market === targetMarket) {
+          foundMap.set(r.symbol, r)
+        }
+      }
+
+      // 判斷是否正在檢視該市場最新日期（留空或等於清單第一筆即為最新日期）
+      const latestAvailableDate = availableDatesRef.current[0]
+      const isLatestDate = !targetDate || targetDate === latestAvailableDate
+
+      // 找出當日查無資料的缺漏標的
+      const missingSymbols = []
+      for (const w of userWatchlist) {
+        if (!foundMap.has(w.symbol)) {
+          missingSymbols.push(w.symbol)
+        }
+      }
+
+      // 若在最新日期檢視，針對缺漏標的向 daily_reports 查詢各自最新一筆紀錄作為回退
+      const fallbackMap = new Map()
+      if (isLatestDate && missingSymbols.length > 0) {
+        try {
+          const { data: fbData } = await supabase
+            .from('daily_reports')
+            .select('*')
+            .in('symbol', missingSymbols)
+            .order('report_date', { ascending: false })
+
+          if (fbData) {
+            for (const fb of fbData) {
+              if (!fallbackMap.has(fb.symbol)) {
+                fallbackMap.set(fb.symbol, fb)
+              }
+            }
+          }
+        } catch (fbErr) {
+          console.debug('回退查詢最新資料略過:', fbErr)
+        }
+      }
+
       const userStockReports = userWatchlist.map((w) => {
-        const found = (allData || []).find(
-          (r) => r.market === targetMarket && r.symbol === w.symbol
-        )
+        const found = foundMap.get(w.symbol) || fallbackMap.get(w.symbol)
         if (found) {
           return found
         }
-        // 剛加入但尚未有 daily_reports 的新標的，呈現 pending 預覽卡片
+
+        // 歷史日期檢視下，缺漏資料不應標記為 isPending，亦不應觸發輪詢
+        if (!isLatestDate) {
+          return {
+            id: 'history_missing_' + w.symbol,
+            symbol: w.symbol,
+            name: w.name,
+            market: w.market,
+            close_price: null,
+            change_percent: null,
+            sentiment: '中性',
+            headline: '此歷史日期尚無紀錄',
+            story_bullets: ['此標的於該歷史交易日無收盤資料。可切換至最新日期檢視即時分析。'],
+            news_links: [],
+            isPending: false,
+          }
+        }
+
+        // 最新日期下剛加入但尚未有 daily_reports 的新標的
+        const isTimedOut = pollTimedOutRef.current
         return {
           id: 'pending_' + w.symbol,
           symbol: w.symbol,
@@ -201,10 +262,10 @@ export default function App() {
           close_price: null,
           change_percent: null,
           sentiment: '中性',
-          headline: pollTimedOut
+          headline: isTimedOut
             ? '暫未取得收盤報告，可稍後點擊右上角重新整理'
             : '即時分析中，正在抓取最新行情與新聞...',
-          story_bullets: pollTimedOut
+          story_bullets: isTimedOut
             ? [
                 '已將此標的加入自選追蹤，後端排程將於收盤後自動處理。',
                 '點擊右上角重新整理按鈕可再次嘗試獲取最新報告。'
@@ -214,32 +275,43 @@ export default function App() {
                 '正在抓取最新交易日價格、漲跌幅與關鍵新聞故事。'
               ],
           news_links: [],
-          isPending: true
+          isPending: !isTimedOut
         }
       })
 
-      // 排序：自選個股按漲跌幅排序
-      userStockReports.sort(
+      // 排序：pending 固定排在最前面，已完成分析者按漲跌幅排序
+      const pendingList = userStockReports.filter((r) => r.isPending)
+      const readyList = userStockReports.filter((r) => !r.isPending)
+      readyList.sort(
         (a, b) => Number(b.change_percent || 0) - Number(a.change_percent || 0)
       )
+      const sortedUserStocks = [...pendingList, ...readyList]
 
-      const combined = [...indexReports, ...userStockReports]
+      const combined = [...indexReports, ...sortedUserStocks]
       setReports((prevReports) => {
-        // 比對新舊資料是否有實質變化，避免無謂 re-render 導致頁面重繪
         if (prevReports.length !== combined.length) return combined
-        const isDifferent = combined.some((item, i) => {
-          const old = prevReports[i]
-          if (!old) return true
-          return (
-            item.symbol !== old.symbol ||
-            item.close_price !== old.close_price ||
-            item.change_percent !== old.change_percent ||
-            item.headline !== old.headline ||
-            item.isPending !== old.isPending ||
-            item.name !== old.name
-          )
+        let hasChanged = false
+        const next = combined.map((newItem, idx) => {
+          const oldItem = prevReports[idx]
+          if (!oldItem) {
+            hasChanged = true
+            return newItem
+          }
+          const isSame =
+            oldItem.symbol === newItem.symbol &&
+            oldItem.close_price === newItem.close_price &&
+            oldItem.change_percent === newItem.change_percent &&
+            oldItem.headline === newItem.headline &&
+            oldItem.isPending === newItem.isPending &&
+            oldItem.name === newItem.name
+          if (isSame) {
+            return oldItem
+          } else {
+            hasChanged = true
+            return newItem
+          }
         })
-        return isDifferent ? combined : prevReports
+        return hasChanged ? next : prevReports
       })
     } catch (err) {
       console.error('撈取報告失敗:', err)
@@ -251,7 +323,7 @@ export default function App() {
       }
       setRefreshing(false)
     }
-  }, [pollTimedOut])
+  }, [])
 
   // 市場切換處理（記錄方向以產生空間滑動動效）
   const handleMarketChange = async (newMarket) => {
@@ -273,6 +345,7 @@ export default function App() {
   const handleRefresh = async () => {
     setRefreshing(true)
     pollCountRef.current = 0
+    pollTimedOutRef.current = false
     setPollTimedOut(false)
     const latestDate = await loadAvailableDates(market)
     const targetDate = selectedDate || latestDate
@@ -302,18 +375,22 @@ export default function App() {
   useEffect(() => {
     if (!pendingKey) {
       pollCountRef.current = 0
+      pollTimedOutRef.current = false
       setPollTimedOut(false)
       return
     }
 
     pollCountRef.current = 0
+    pollTimedOutRef.current = false
     setPollTimedOut(false)
 
     const timer = setInterval(() => {
       pollCountRef.current += 1
       if (pollCountRef.current >= MAX_POLL_ATTEMPTS) {
         clearInterval(timer)
+        pollTimedOutRef.current = true
         setPollTimedOut(true)
+        loadReports(market, selectedDate, true)
         return
       }
       loadReports(market, selectedDate, true)
@@ -331,56 +408,76 @@ export default function App() {
     return reports.filter((r) => !isMarketIndex(r.symbol))
   }, [reports])
 
+  // 自選股 symbol 清單，使用 useMemo 保持引用穩定
+  const existingSymbols = useMemo(() => {
+    return userStockReports.map((r) => r.symbol)
+  }, [userStockReports])
+
   // 圖卡「一加（+）」：直接在自選股列表新增並寫入 Supabase watchlist
-  const handleAddStock = async ({ symbol, name, market: stockMarket }) => {
-    if (!session?.user) return false
-    try {
-      const { error } = await supabase.from('watchlist').insert([
-        {
-          user_id: session.user.id,
-          symbol,
-          name,
-          market: stockMarket,
-        },
-      ])
+  const handleAddStock = useCallback(
+    async ({ symbol, name, market: stockMarket }) => {
+      if (!session?.user) return false
+      try {
+        const { error } = await supabase.from('watchlist').insert([
+          {
+            user_id: session.user.id,
+            symbol,
+            name,
+            market: stockMarket,
+          },
+        ])
 
-      if (error) {
-        if (error.code === '23505') {
-          throw new Error(`${symbol} 已在自選股清單中`)
+        if (error) {
+          if (error.code === '23505') {
+            throw new Error(`${symbol} 已在自選股清單中`)
+          }
+          throw error
         }
-        throw error
-      }
 
-      pollCountRef.current = 0
-      setPollTimedOut(false)
-      const targetDate = selectedDate || (await loadAvailableDates(market))
-      await loadReports(market, targetDate, true)
-      return true
-    } catch (err) {
-      console.error('新增股票失敗:', err)
-      throw err
-    }
-  }
+        pollCountRef.current = 0
+        pollTimedOutRef.current = false
+        setPollTimedOut(false)
+
+        // 若使用者在歷史日期下新增股票，自動切換回最新日期檢視
+        let targetDate = selectedDate
+        const latestDate = availableDatesRef.current[0]
+        if (latestDate && selectedDate !== latestDate) {
+          setSelectedDate(latestDate)
+          targetDate = latestDate
+        }
+
+        await loadReports(market, targetDate, true)
+        return true
+      } catch (err) {
+        console.error('新增股票失敗:', err)
+        throw err
+      }
+    },
+    [session, market, selectedDate, loadReports]
+  )
 
   // 圖卡「一減（−）」：直接在卡片上防誤觸兩段式移除
-  const handleRemoveStock = async (stockSymbol) => {
-    if (!session?.user) return
-    try {
-      const { error } = await supabase
-        .from('watchlist')
-        .delete()
-        .eq('user_id', session.user.id)
-        .eq('symbol', stockSymbol)
+  const handleRemoveStock = useCallback(
+    async (stockSymbol) => {
+      if (!session?.user) return
+      try {
+        const { error } = await supabase
+          .from('watchlist')
+          .delete()
+          .eq('user_id', session.user.id)
+          .eq('symbol', stockSymbol)
 
-      if (error) throw error
+        if (error) throw error
 
-      // 本地立即過濾狀態以獲得平滑淡出反應
-      setReports((prev) => prev.filter((r) => r.symbol !== stockSymbol))
-    } catch (err) {
-      console.error('移除自選股失敗:', err)
-      setErrorMsg('移除自選股失敗：' + (err.message || '連線異常'))
-    }
-  }
+        // 本地立即過濾狀態以獲得平滑淡出反應
+        setReports((prev) => prev.filter((r) => r.symbol !== stockSymbol))
+      } catch (err) {
+        console.error('移除自選股失敗:', err)
+        setErrorMsg('移除自選股失敗：' + (err.message || '連線異常'))
+      }
+    },
+    [session]
+  )
 
   // Auth 載入中畫面
   if (authLoading) {
@@ -683,7 +780,7 @@ export default function App() {
                       </motion.section>
                     )}
 
-                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（popLayout 平滑補位 + 原地展開 + 一加一減） */}
+                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（AddStockCard 置頂物理隔離，popLayout 平滑補位） */}
                     {cardViewMode === 'STOCKS' && (
                       <motion.section
                         key="stocks-section"
@@ -701,6 +798,13 @@ export default function App() {
                           </span>
                         </div>
 
+                        {/* 關鍵佈局：AddStockCard 固定置於最頂端，輸入位置永遠穩定且不隨下方卡片變動位移 */}
+                        <AddStockCard
+                          market={market}
+                          onAddStock={handleAddStock}
+                          existingSymbols={existingSymbols}
+                        />
+
                         {/* 個人個股圖卡列表與流暢補位 */}
                         <div className="space-y-3">
                           <AnimatePresence mode="popLayout" initial={false}>
@@ -712,13 +816,6 @@ export default function App() {
                               />
                             ))}
                           </AnimatePresence>
-
-                          {/* 圖卡「一加（+）」：列表最末端原地展開的半透明霧面玻璃新增圖卡 */}
-                          <AddStockCard
-                            market={market}
-                            onAddStock={handleAddStock}
-                            existingSymbols={userStockReports.map((r) => r.symbol)}
-                          />
                         </div>
                       </motion.section>
                     )}

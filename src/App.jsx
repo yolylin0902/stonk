@@ -622,78 +622,87 @@ export default function App() {
                   </span>
                 </div>
               ) : (
-                <div className="space-y-5 pb-10">
-                  {/* 1. 市場指數區 — 僅在 INDEX 模式顯示（獨立穩定顯示，popLayout 補位） */}
-                  {cardViewMode === 'INDEX' && (
-                    <motion.section
-                      key="index-section"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={IOS_SPRING.smooth}
-                      className="space-y-3"
-                    >
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
-                          {market === 'US' ? '美股指數' : '台股指數'}
-                        </span>
-                        <span className="text-[10px] text-white/25 tabular-nums">{indexReports.length}</span>
-                      </div>
-                      {indexReports.length === 0 ? (
-                        <div className="p-8 rounded-[24px] border border-dashed border-white/[0.07] bg-white/[0.02] text-center">
-                          <p className="text-xs text-white/40">暫無指數數據</p>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={`${market}-${selectedDate}`}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={IOS_SPRING.smooth}
+                    className="space-y-5 pb-10"
+                  >
+                    {/* 1. 市場指數區 — 僅在 INDEX 模式顯示（獨立穩定顯示，popLayout 補位） */}
+                    {cardViewMode === 'INDEX' && (
+                      <motion.section
+                        key="index-section"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={IOS_SPRING.smooth}
+                        className="space-y-3"
+                      >
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
+                            {market === 'US' ? '美股指數' : '台股指數'}
+                          </span>
+                          <span className="text-[10px] text-white/25 tabular-nums">{indexReports.length}</span>
                         </div>
-                      ) : (
+                        {indexReports.length === 0 ? (
+                          <div className="p-8 rounded-[24px] border border-dashed border-white/[0.07] bg-white/[0.02] text-center">
+                            <p className="text-xs text-white/40">暫無指數數據</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <AnimatePresence mode="popLayout" initial={false}>
+                              {indexReports.map((report) => (
+                                <StockCard key={report.id || report.symbol} report={report} />
+                              ))}
+                            </AnimatePresence>
+                          </div>
+                        )}
+                      </motion.section>
+                    )}
+
+                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（popLayout 平滑補位 + 原地展開 + 一加一減） */}
+                    {cardViewMode === 'STOCKS' && (
+                      <motion.section
+                        key="stocks-section"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={IOS_SPRING.smooth}
+                        className="space-y-3"
+                      >
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
+                            自選股
+                          </span>
+                          <span className="text-[10px] text-white/25 tabular-nums">
+                            {userStockReports.length}
+                          </span>
+                        </div>
+
+                        {/* 個人個股圖卡列表與流暢補位 */}
                         <div className="space-y-3">
                           <AnimatePresence mode="popLayout" initial={false}>
-                            {indexReports.map((report) => (
-                              <StockCard key={report.id || report.symbol} report={report} />
+                            {userStockReports.map((report) => (
+                              <StockCard
+                                key={report.id || report.symbol}
+                                report={report}
+                                onRemove={handleRemoveStock}
+                              />
                             ))}
                           </AnimatePresence>
+
+                          {/* 圖卡「一加（+）」：列表最末端原地展開的半透明霧面玻璃新增圖卡 */}
+                          <AddStockCard
+                            market={market}
+                            onAddStock={handleAddStock}
+                            existingSymbols={userStockReports.map((r) => r.symbol)}
+                          />
                         </div>
-                      )}
-                    </motion.section>
-                  )}
-
-                  {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（popLayout 平滑補位 + 原地展開 + 一加一減） */}
-                  {cardViewMode === 'STOCKS' && (
-                    <motion.section
-                      key="stocks-section"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={IOS_SPRING.smooth}
-                      className="space-y-3"
-                    >
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
-                          自選股
-                        </span>
-                        <span className="text-[10px] text-white/25 tabular-nums">
-                          {userStockReports.length}
-                        </span>
-                      </div>
-
-                      {/* 個人個股圖卡列表與流暢補位 */}
-                      <div className="space-y-3">
-                        <AnimatePresence mode="popLayout" initial={false}>
-                          {userStockReports.map((report) => (
-                            <StockCard
-                              key={report.id || report.symbol}
-                              report={report}
-                              onRemove={handleRemoveStock}
-                            />
-                          ))}
-                        </AnimatePresence>
-
-                        {/* 圖卡「一加（+）」：列表最末端原地展開的半透明霧面玻璃新增圖卡 */}
-                        <AddStockCard
-                          market={market}
-                          onAddStock={handleAddStock}
-                          existingSymbols={userStockReports.map((r) => r.symbol)}
-                        />
-                      </div>
-                    </motion.section>
-                  )}
-                </div>
+                      </motion.section>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
               )}
             </motion.div>
           </AnimatePresence>

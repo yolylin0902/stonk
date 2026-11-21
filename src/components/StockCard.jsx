@@ -195,8 +195,8 @@ export default function StockCard({ report, onRemove }) {
         </div>
       </div>
 
-      {/* ── Row 2: Headline (one-sentence reason) ── */}
-      {headline && (
+      {/* ── Row 2: Headline (one-sentence reason) or Intraday prompt ── */}
+      {headline ? (
         <div className="mt-4">
           {sentiment && (
             <span className={sentimentCls}>{sentiment}</span>
@@ -204,6 +204,11 @@ export default function StockCard({ report, onRemove }) {
           <p className="text-[15px] font-medium text-white/95 leading-snug tracking-tight mt-2">
             {headline}
           </p>
+        </div>
+      ) : (
+        <div className="mt-3.5 pt-3 border-t border-white/[0.06] flex items-center space-x-2 text-[12px] text-white/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70" />
+          <span>盤中報價 · 收盤後整理新聞</span>
         </div>
       )}
 

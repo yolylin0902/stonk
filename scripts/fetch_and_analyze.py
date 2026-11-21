@@ -169,66 +169,91 @@ def upsert_daily_report(client: Client, report_data: Dict[str, Any]) -> bool:
 # ----------------------------------------------------------------------
 def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
     """
-    透過 yfinance 取得最新交易日收盤價與漲跌幅。
-    結合 fast_info 與 history 雙重保證，徹底解決美股盤後數據 NaN 導致抓到舊日期的問題。
+    透過 yfinance 取得最新股價（盤中即時價或最新交易日收盤價）與前日收盤價及漲跌幅。
+    回退鏈：fast_info -> history(5d, 1d) -> history(1d, 5m)，相容美股、台股 (.TW) 與大盤指數。
     """
     try:
         ticker = yf.Ticker(symbol)
-        
-        # 1. 優先嘗試取得 fast_info 即時與最新收盤數據
-        fi = ticker.fast_info
-        fast_last = getattr(fi, "last_price", None)
-        fast_prev = getattr(fi, "regular_market_previous_close", None) or getattr(fi, "previous_close", None)
+        current_price = None
+        prev_close = None
+        report_date = None
 
-        # 2. 取得歷史資料以定位精確交易日
-        hist = ticker.history(period="1mo")
-        if hist.empty or len(hist) < 2:
-            hist = ticker.history(period="3mo")
+        # ── 1. 優先讀取 fast_info 即時與前收盤數據 ──
+        try:
+            fi = ticker.fast_info
+            fast_last = getattr(fi, "last_price", None)
+            fast_prev = getattr(fi, "regular_market_previous_close", None) or getattr(fi, "previous_close", None)
+            if fast_last is not None and fast_prev is not None:
+                f_last = float(fast_last)
+                f_prev = float(fast_prev)
+                if not (math.isnan(f_last) or math.isnan(f_prev)) and f_last > 0 and f_prev > 0:
+                    current_price = round(f_last, 2)
+                    prev_close = round(f_prev, 2)
+        except Exception as e:
+            logger.debug(f"{symbol} fast_info 讀取失敗: {e}")
 
-        if hist.empty:
-            logger.warning(f"⚠️ {symbol}: 無法取得歷史股價資料。")
+        # ── 2. 歷史日線資料 (5d, 1d) 定位最新交易日與前收盤價 ──
+        try:
+            hist_daily = ticker.history(period="5d", interval="1d")
+            if hist_daily is not None and not hist_daily.empty:
+                valid_daily = hist_daily.dropna(subset=["Close"])
+                if not valid_daily.empty:
+                    report_date = valid_daily.index[-1].strftime("%Y-%m-%d")
+
+                    if prev_close is None and len(valid_daily) >= 2:
+                        p_val = float(valid_daily.iloc[-2]["Close"])
+                        if not math.isnan(p_val) and p_val > 0:
+                            prev_close = round(p_val, 2)
+
+                    if current_price is None:
+                        c_val = float(valid_daily.iloc[-1]["Close"])
+                        if not math.isnan(c_val) and c_val > 0:
+                            current_price = round(c_val, 2)
+        except Exception as e:
+            logger.debug(f"{symbol} history(5d, 1d) 讀取失敗: {e}")
+
+        # ── 3. 若為盤中日線尚未生成最後價格，回退讀取 5m 分鐘線 ──
+        if current_price is None:
+            try:
+                hist_intraday = ticker.history(period="1d", interval="5m")
+                if hist_intraday is not None and not hist_intraday.empty:
+                    valid_intraday = hist_intraday.dropna(subset=["Close"])
+                    if not valid_intraday.empty:
+                        last_intra = float(valid_intraday.iloc[-1]["Close"])
+                        if not math.isnan(last_intra) and last_intra > 0:
+                            current_price = round(last_intra, 2)
+                            if report_date is None:
+                                report_date = valid_intraday.index[-1].strftime("%Y-%m-%d")
+            except Exception as e:
+                logger.debug(f"{symbol} history(1d, 5m) 讀取失敗: {e}")
+
+        # 若依然無法定位日期，使用今日日期
+        if not report_date:
+            report_date = datetime.now().strftime("%Y-%m-%d")
+
+        # 驗證是否有有效股價
+        if current_price is None or current_price <= 0:
+            logger.warning(f"⚠️ {symbol}: 無法取得有效的即時/收盤價格")
             return None
 
-        # 取得最後一筆的日期（即使該筆 Close 是 NaN，日期也是最新的交易日）
-        latest_date = hist.index[-1].strftime("%Y-%m-%d")
+        # 若依然沒有前收盤價，嘗試從 ticker.info 取得
+        if prev_close is None or prev_close <= 0:
+            try:
+                info_prev = ticker.info.get("previousClose") or ticker.info.get("regularMarketPreviousClose")
+                if info_prev and float(info_prev) > 0:
+                    prev_close = round(float(info_prev), 2)
+            except Exception:
+                pass
 
-        # 若 fast_info 資料齊全且數值有效，以 fast_info 為準（最即時精確）
-        if fast_last is not None and fast_prev is not None and fast_prev > 0:
-            f_last = float(fast_last)
-            f_prev = float(fast_prev)
-            if not (math.isnan(f_last) or math.isnan(f_prev)):
-                close_price = round(f_last, 2)
-                prev_close = round(f_prev, 2)
-                change_percent = round(((close_price - prev_close) / prev_close) * 100, 2)
-                return {
-                    "report_date": latest_date,
-                    "close_price": close_price,
-                    "change_percent": change_percent,
-                    "prev_close": prev_close,
-                }
-
-        # 備用方案：從 history 清除 NaN 後計算
-        valid_hist = hist.dropna(subset=["Close"])
-        if len(valid_hist) < 2:
-            logger.warning(f"⚠️ {symbol}: 有效歷史收盤資料不足 2 個交易日。")
-            return None
-
-        latest_row = valid_hist.iloc[-1]
-        prev_row = valid_hist.iloc[-2]
-        close_raw = float(latest_row["Close"])
-        prev_raw = float(prev_row["Close"])
-        if math.isnan(close_raw) or math.isnan(prev_raw):
-            logger.warning(f"⚠️ {symbol}: 收盤價包含 NaN。")
-            return None
-
-        report_date = valid_hist.index[-1].strftime("%Y-%m-%d")
-        close_price = round(close_raw, 2)
-        prev_close = round(prev_raw, 2)
-        change_percent = round(((close_price - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+        if prev_close and prev_close > 0:
+            change_percent = round(((current_price - prev_close) / prev_close) * 100, 2)
+        else:
+            prev_close = current_price
+            change_percent = 0.0
 
         return {
             "report_date": report_date,
-            "close_price": close_price,
+            "close_price": current_price,
             "change_percent": change_percent,
             "prev_close": prev_close,
         }
@@ -515,7 +540,7 @@ def main():
 
                 total_processed += 1
 
-                # 1. 抓取收盤價與計算漲跌幅
+                # 1. 抓取收盤價或盤中即時價與漲跌幅
                 price_info = fetch_stock_price(symbol)
                 if not price_info:
                     logger.warning(f"⏩ 跳過 {symbol}：無法取得足夠的行情數據")
@@ -528,23 +553,64 @@ def main():
                     f"📈 {symbol} 最新收盤日: {report_date}, 價格: {close_price}, 漲跌幅: {change_percent}%"
                 )
 
+                # 查詢該日是否已有既有報告（避免盤中報價更新時覆蓋已生成的 AI 故事）
+                existing_report = None
+                try:
+                    ex_res = (
+                        supabase_client.table("daily_reports")
+                        .select("headline, story_bullets, news_links, sentiment")
+                        .eq("report_date", report_date)
+                        .eq("symbol", symbol)
+                        .execute()
+                    )
+                    if ex_res.data and len(ex_res.data) > 0:
+                        existing_report = ex_res.data[0]
+                except Exception as ex_err:
+                    logger.debug(f"{symbol} 查詢既有報告略過: {ex_err}")
+
                 # 2. 抓取相關新聞
                 news_items = fetch_google_news(symbol, name, market_type, limit=6)
 
-                # 3. 呼叫 Gemini AI 進行新聞摘要與歸納
-                logger.info(f"🤖 正在呼叫 Gemini 模型 ({configs['gemini_model']}) 進行 AI 漲跌故事分析...")
-                ai_analysis = analyze_stock_story(
-                    symbol=symbol,
-                    name=name,
-                    market=market_type,
-                    close_price=close_price,
-                    change_percent=change_percent,
-                    news_list=news_items,
-                    api_key=configs["gemini_api_key"],
-                    model_name=configs["gemini_model"],
-                )
+                # 3. 呼叫 Gemini AI 進行新聞摘要與歸納（即使 AI 失敗亦不阻斷股價寫入）
+                sentiment = "中性"
+                headline = ""
+                story_bullets = []
 
-                # 4. 組裝資料並 Upsert 到 Supabase
+                if news_items:
+                    try:
+                        logger.info(f"🤖 正在呼叫 Gemini 模型 ({configs['gemini_model']}) 進行 AI 漲跌故事分析...")
+                        ai_analysis = analyze_stock_story(
+                            symbol=symbol,
+                            name=name,
+                            market=market_type,
+                            close_price=close_price,
+                            change_percent=change_percent,
+                            news_list=news_items,
+                            api_key=configs["gemini_api_key"],
+                            model_name=configs["gemini_model"],
+                        )
+                        sentiment = ai_analysis.get("sentiment", "中性")
+                        headline = ai_analysis.get("headline", "")
+                        story_bullets = ai_analysis.get("story_bullets", [])
+                    except Exception as ai_err:
+                        logger.warning(f"⚠️ {symbol} AI 摘要分析失敗或略過: {ai_err}")
+
+                # 若本次未生成新摘要，但既有報告已存在完整摘要，優先保留既有摘要
+                if not headline and existing_report and existing_report.get("headline"):
+                    headline = existing_report["headline"]
+                    sentiment = existing_report.get("sentiment", "中性")
+                    story_bullets = existing_report.get("story_bullets") or []
+                    news_items = existing_report.get("news_links") or news_items
+
+                # 若仍無摘要（如新上市或冷門盤中無新聞），填入乾淨的盤中提示
+                if not headline:
+                    headline = "盤中即時報價，收盤後自動更新完整新聞摘要"
+                    story_bullets = [
+                        "最新盤中交易行情已即時同步更新。",
+                        "相關收盤新聞與關鍵催化因素將於收盤後自動歸納。"
+                    ]
+
+                # 4. 組裝資料並 Upsert 到 Supabase（股價與新聞解耦，保證報價必存）
                 report_record = {
                     "report_date": report_date,
                     "market": market_type,
@@ -552,9 +618,9 @@ def main():
                     "name": name,
                     "close_price": close_price,
                     "change_percent": change_percent,
-                    "sentiment": ai_analysis["sentiment"],
-                    "headline": ai_analysis["headline"],
-                    "story_bullets": ai_analysis["story_bullets"],
+                    "sentiment": sentiment,
+                    "headline": headline,
+                    "story_bullets": story_bullets,
                     "news_links": news_items,
                 }
 

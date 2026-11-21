@@ -2,13 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Apple System Font Stack ─── */
+/* ─── Apple System Font Stack & iOS Touch Baseline ─── */
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang TC", "Noto Sans TC", sans-serif;
   color-scheme: dark;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, a, input, select, [role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ─── Liquid Glass shared material ─── */
@@ -51,6 +57,16 @@
   box-shadow:
     inset 0 0.8px 0.5px rgba(255, 255, 255, 0.25),
     0 6px 20px rgba(0, 0, 0, 0.30);
+}
+
+/* Liquid Glass 按壓邊框高光微反饋 */
+.ios-glass,
+.ios-glass-control {
+  transition: border-color 0.2s ease-out;
+}
+.ios-glass:active,
+.ios-glass-control:active {
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 /* ─── Scrollbar ─── */

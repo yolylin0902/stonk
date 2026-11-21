@@ -1,5 +1,7 @@
 import React from 'react'
+import { motion } from 'framer-motion'
 import { RefreshCw, LogOut } from 'lucide-react'
+import { TACTILE_TAP, IOS_SPRING } from '../motion/iosMotion'
 
 export default function Header({
   user,
@@ -29,11 +31,14 @@ export default function Header({
         {/* Right-side controls */}
         <div className="flex items-center space-x-1.5 pb-1">
           {user && (
-            <button
+            <motion.button
+              type="button"
+              whileTap={TACTILE_TAP}
+              transition={IOS_SPRING.snappy}
               onClick={onSignOut}
               title="點擊登出"
               aria-label="登出"
-              className="h-8 px-2.5 rounded-full ios-glass-control flex items-center space-x-1.5 active:scale-[0.95] transition-all duration-150 ease-out text-white/70 hover:text-white"
+              className="h-8 px-2.5 rounded-full ios-glass-control flex items-center space-x-1.5 text-white/70 hover:text-white select-none"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
               <span className="text-[12px] font-medium max-w-[80px] truncate">
@@ -45,22 +50,30 @@ export default function Header({
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
-            </button>
+            </motion.button>
           )}
 
-          <button
+          <motion.button
+            type="button"
+            whileTap={TACTILE_TAP}
+            transition={IOS_SPRING.snappy}
             onClick={onRefresh}
             disabled={isRefreshing}
             aria-label="重新整理"
-            className="w-8 h-8 rounded-full ios-glass-control flex items-center justify-center active:scale-[0.92] transition-all duration-150 ease-out"
+            className="w-8 h-8 rounded-full ios-glass-control flex items-center justify-center select-none"
           >
-            <RefreshCw
-              className={`w-[14px] h-[14px] text-white/70 ${isRefreshing ? 'animate-spin' : ''}`}
-              strokeWidth={1.75}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </button>
+            <motion.div
+              animate={{ rotate: isRefreshing ? 360 : 0 }}
+              transition={isRefreshing ? { repeat: Infinity, duration: 0.8, ease: "linear" } : IOS_SPRING.smooth}
+            >
+              <RefreshCw
+                className="w-[14px] h-[14px] text-white/70"
+                strokeWidth={1.75}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </motion.div>
+          </motion.button>
         </div>
       </div>
     </header>

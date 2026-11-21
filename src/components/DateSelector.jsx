@@ -1,5 +1,7 @@
 import React from 'react'
+import { motion } from 'framer-motion'
 import { Calendar, ChevronDown } from 'lucide-react'
+import { TACTILE_TAP } from '../motion/iosMotion'
 
 export default function DateSelector({ availableDates, selectedDate, onSelectDate }) {
   if (!availableDates || availableDates.length === 0) {
@@ -22,7 +24,7 @@ export default function DateSelector({ availableDates, selectedDate, onSelectDat
   }
 
   return (
-    <div className="flex items-center justify-between px-1">
+    <div className="flex items-center justify-between px-1 select-none">
       <div className="flex items-center space-x-1.5 text-[13px] text-white/45 font-medium">
         <Calendar
           className="w-3.5 h-3.5"
@@ -33,12 +35,12 @@ export default function DateSelector({ availableDates, selectedDate, onSelectDat
         <span>收盤日</span>
       </div>
 
-      <div className="relative inline-block">
+      <motion.div whileTap={TACTILE_TAP} className="relative inline-block">
         <select
           value={selectedDate}
           onChange={(e) => onSelectDate(e.target.value)}
           aria-label="選擇收盤報告日期"
-          className="bg-white/[0.07] border border-white/[0.08] text-white/80 text-[13px] font-medium py-1.5 pl-3 pr-7 rounded-full focus:outline-none focus:border-white/20 transition-all cursor-pointer"
+          className="bg-white/[0.07] border border-white/[0.08] text-white/80 text-[13px] font-medium py-1.5 pl-3 pr-7 rounded-full focus:outline-none focus:border-white/20 transition-colors cursor-pointer select-none"
         >
           {availableDates.map((date) => (
             <option key={date} value={date} className="bg-[#1c1c1e] text-white">
@@ -50,7 +52,7 @@ export default function DateSelector({ availableDates, selectedDate, onSelectDat
           className="w-3.5 h-3.5 text-white/35 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
           strokeWidth={1.75}
         />
-      </div>
+      </motion.div>
     </div>
   )
 }

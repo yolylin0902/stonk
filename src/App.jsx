@@ -4,6 +4,7 @@ import Header from './components/Header'
 import MarketTabs from './components/MarketTabs'
 import DateSelector from './components/DateSelector'
 import StockCard from './components/StockCard'
+import StockDetailModal from './components/StockDetailModal'
 import AddStockCard from './components/AddStockCard'
 import ParkSleepSection from './components/ParkSleepSection'
 import { supabase } from './lib/supabase'
@@ -77,6 +78,14 @@ export default function App() {
 
   // 檢視模式：自選個股 (STOCKS) 或 主要指數 (INDEX)
   const [cardViewMode, setCardViewMode] = useState('STOCKS')
+
+  // 彈出式詳情頁選取狀態（單一真實來源，僅存 symbol 代號）
+  const [selectedSymbol, setSelectedSymbol] = useState(null)
+
+  const selectedReport = useMemo(() => {
+    if (!selectedSymbol) return null
+    return reports.find((r) => r.symbol === selectedSymbol) || null
+  }, [reports, selectedSymbol])
 
   // 監聽 Supabase 驗證狀態（保持完全同步，絕不 await 任何非同步呼叫）
   useEffect(() => {
@@ -464,6 +473,7 @@ export default function App() {
   // 市場切換處理（記錄方向以產生空間滑動動效）
   const handleMarketChange = async (newMarket) => {
     if (newMarket === market) return
+    setSelectedSymbol(null)
     const dir = newMarket === 'TW' ? 1 : -1
     setMarketDirection(dir)
     setMarket(newMarket)
@@ -473,6 +483,7 @@ export default function App() {
 
   // 日期切換處理
   const handleDateChange = async (newDate) => {
+    setSelectedSymbol(null)
     setSelectedDate(newDate)
     await loadReports(market, newDate)
   }
@@ -720,6 +731,8 @@ export default function App() {
 
         if (error) throw error
 
+        setSelectedSymbol((prev) => (prev === stockSymbol ? null : prev))
+
         // 本地立即過濾狀態以獲得平滑淡出反應
         setReports((prev) => prev.filter((r) => r.symbol !== stockSymbol))
       } catch (err) {
@@ -930,7 +943,10 @@ export default function App() {
                     <motion.button
                       type="button"
                       whileTap={TACTILE_TAP}
-                      onClick={() => setCardViewMode('INDEX')}
+                      onClick={() => {
+                        setSelectedSymbol(null)
+                        setCardViewMode('INDEX')
+                      }}
                       className="relative z-10 flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-[12px] font-medium transition-colors duration-150 outline-none select-none"
                     >
                       {cardViewMode === 'INDEX' && (
@@ -948,7 +964,10 @@ export default function App() {
                     <motion.button
                       type="button"
                       whileTap={TACTILE_TAP}
-                      onClick={() => setCardViewMode('STOCKS')}
+                      onClick={() => {
+                        setSelectedSymbol(null)
+                        setCardViewMode('STOCKS')
+                      }}
                       className="relative z-10 flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-[12px] font-medium transition-colors duration-150 outline-none select-none"
                     >
                       {cardViewMode === 'STOCKS' && (
@@ -1000,7 +1019,7 @@ export default function App() {
                     transition={IOS_SPRING.smooth}
                     className="space-y-5 pb-10"
                   >
-                    {/* 1. 市場指數區 — 僅在 INDEX 模式顯示（獨立穩定顯示，popLayout 補位） */}
+                    {/* 1. 市場指數區 — 僅在 INDEX 模式顯示（雙欄控制中心小方塊） */}
                     {cardViewMode === 'INDEX' && (
                       <motion.section
                         key="index-section"
@@ -1020,22 +1039,22 @@ export default function App() {
                             <p className="text-xs text-white/40">暫無指數數據</p>
                           </div>
                         ) : (
-                          <div className="space-y-3">
-                            <AnimatePresence mode="popLayout" initial={false}>
-                              {indexReports.map((report) => (
-                                <StockCard
-                                  key={report.symbol}
-                                  report={report}
-                                  liveQuote={isViewingLatestDate ? liveQuotes[report.symbol] : null}
-                                />
-                              ))}
-                            </AnimatePresence>
+                          <div className="grid grid-cols-2 gap-3">
+                            {indexReports.map((report) => (
+                              <StockCard
+                                key={report.symbol}
+                                report={report}
+                                isIndex={true}
+                                liveQuote={isViewingLatestDate ? liveQuotes[report.symbol] : null}
+                                onSelect={setSelectedSymbol}
+                              />
+                            ))}
                           </div>
                         )}
                       </motion.section>
                     )}
 
-                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示 */}
+                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（雙欄控制中心小方塊） */}
                     {cardViewMode === 'STOCKS' && (
                       <motion.section
                         key="stocks-section"
@@ -1054,17 +1073,24 @@ export default function App() {
                         </div>
 
                         {/* 個人個股圖卡列表與流暢補位 */}
-                        <div className="space-y-3">
-                          <AnimatePresence mode="popLayout" initial={false}>
-                            {userStockReports.map((report) => (
-                              <StockCard
-                                key={report.symbol}
-                                report={report}
-                                onRemove={handleRemoveStock}
-                                liveQuote={isViewingLatestDate ? liveQuotes[report.symbol] : null}
-                              />
-                            ))}
-                          </AnimatePresence>
+                        <div className="space-y-4">
+                          {userStockReports.length === 0 ? (
+                            <div className="p-8 rounded-[24px] border border-dashed border-white/[0.07] bg-white/[0.02] text-center">
+                              <p className="text-xs text-white/40">尚未加入自選標的</p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 gap-3">
+                              {userStockReports.map((report) => (
+                                <StockCard
+                                  key={report.symbol}
+                                  report={report}
+                                  isIndex={false}
+                                  liveQuote={isViewingLatestDate ? liveQuotes[report.symbol] : null}
+                                  onSelect={setSelectedSymbol}
+                                />
+                              ))}
+                            </div>
+                          )}
 
                           {/* 圖卡「一加（+）」：列表最末端原地展開的半透明霧面玻璃新增圖卡 */}
                           <AddStockCard
@@ -1081,6 +1107,15 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        {/* 根層級掛載彈出式詳情頁（避開 CSS transform 與 overflow 陷阱） */}
+        <StockDetailModal
+          report={selectedReport}
+          isIndex={selectedReport ? isMarketIndex(selectedReport.symbol) : false}
+          liveQuote={selectedReport ? liveQuotes[selectedReport.symbol] || null : null}
+          onClose={() => setSelectedSymbol(null)}
+          onRemove={handleRemoveStock}
+        />
       </div>
     </MotionConfig>
   )

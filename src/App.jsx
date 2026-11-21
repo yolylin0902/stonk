@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Header from './components/Header'
 import MarketTabs from './components/MarketTabs'
 import DateSelector from './components/DateSelector'
@@ -27,6 +27,9 @@ export const isMarketIndex = (symbol) => {
   return false
 }
 
+// 待分析個股的輪詢上限（每次 4 秒，最多 6 次約 24 秒），避免無休止請求消耗 Supabase 配額
+const MAX_POLL_ATTEMPTS = 6
+
 export default function App() {
   const [market, setMarket] = useState('US') // 'US' or 'TW'
   const [reports, setReports] = useState([])
@@ -37,6 +40,10 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState('')
   const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false)
   const [marketCounts, setMarketCounts] = useState({ US: 0, TW: 0 })
+
+  // 待分析個股的計數器與超時狀態
+  const pollCountRef = useRef(0)
+  const [pollTimedOut, setPollTimedOut] = useState(false)
 
   // 使用者狀態管理 (持久化於 localStorage)
   const [profiles, setProfiles] = useState(() => getStoredProfiles())
@@ -160,12 +167,20 @@ export default function App() {
           close_price: null,
           change_percent: null,
           sentiment: '中性',
-          headline: '即時分析中，正在抓取最新行情與新聞...',
-          story_bullets: [
-            '已成功將此標的加入自選追蹤，後端同步守護程序已自動響應。',
-            '正在透過金融數據源抓取最新交易日價格與漲跌幅。',
-            '正在爬梳即時新聞並歸納關鍵驅動原因，完成後自動呈現。'
-          ],
+          headline: pollTimedOut
+            ? '暫未取得當日報告，請稍後點擊右上角重新整理'
+            : '即時分析中，正在抓取最新行情與新聞...',
+          story_bullets: pollTimedOut
+            ? [
+                '已將此標的加入自選追蹤，後端排程將於收盤後自動處理。',
+                '若需立即更新，可確認背景同步守護程式是否已啟動。',
+                '點擊右上角重新整理按鈕可再次嘗試獲取最新報告。'
+              ]
+            : [
+                '已成功將此標的加入自選追蹤，後端同步守護程序已自動響應。',
+                '正在透過金融數據源抓取最新交易日價格與漲跌幅。',
+                '正在爬梳即時新聞並歸納關鍵驅動原因，完成後自動呈現。'
+              ],
           news_links: [],
           isPending: true
         }))
@@ -228,6 +243,8 @@ export default function App() {
   // 手動重新整理
   const handleRefresh = async () => {
     setRefreshing(true)
+    pollCountRef.current = 0
+    setPollTimedOut(false)
     const latestDate = await loadAvailableDates(market)
     const targetDate = selectedDate || latestDate
     await loadReports(market, targetDate)
@@ -244,17 +261,38 @@ export default function App() {
     init()
   }, [loadAvailableDates, loadReports, loadMarketCounts])
 
-  // 若目前畫面上有尚未分析完成的新自選股，自動短暫輪詢以實現即時「幾秒內自動更新」體驗
+  // 穩定的待分析個股 Key，避免 reports 物件頻繁異動造成重複觸發
+  const pendingKey = useMemo(() => {
+    return reports
+      .filter((r) => r.isPending)
+      .map((r) => r.symbol)
+      .sort()
+      .join(',')
+  }, [reports])
+
+  // 若目前畫面上有尚未分析完成的新自選股，自動短暫輪詢；超過 MAX_POLL_ATTEMPTS 次自動停止，避免浪費 API 配額
   useEffect(() => {
-    const hasPending = reports.some((r) => r.isPending)
-    if (!hasPending) return
+    if (!pendingKey) {
+      pollCountRef.current = 0
+      setPollTimedOut(false)
+      return
+    }
+
+    pollCountRef.current = 0
+    setPollTimedOut(false)
 
     const timer = setInterval(() => {
+      pollCountRef.current += 1
+      if (pollCountRef.current >= MAX_POLL_ATTEMPTS) {
+        clearInterval(timer)
+        setPollTimedOut(true)
+        return
+      }
       loadReports(market, selectedDate)
     }, 4000)
 
     return () => clearInterval(timer)
-  }, [reports, market, selectedDate, loadReports])
+  }, [pendingKey, market, selectedDate, loadReports])
 
   // 分離出「指數區」與「自選個股區」
   const indexReports = useMemo(() => {

@@ -56,11 +56,23 @@ jobs:
           fi
 
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ "${{ github.event.schedule }}" = "35 21 * * 1-5" ]; then
-              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US" >> $GITHUB_ENV
-            elif [ "${{ github.event.schedule }}" = "5 6 * * 1-5" ]; then
-              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW" >> $GITHUB_ENV
-            fi
+            CLEAN_SCHEDULE=$(echo "${{ github.event.schedule }}" | tr -s ' ' | xargs)
+            case "$CLEAN_SCHEDULE" in
+              "35 21 * * 1-5")
+                echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US" >> $GITHUB_ENV
+                ;;
+              "5 6 * * 1-5")
+                echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW" >> $GITHUB_ENV
+                ;;
+              *)
+                UTC_HOUR=$((10#$(date -u +%H)))
+                if [ "$UTC_HOUR" -ge 4 ] && [ "$UTC_HOUR" -le 13 ]; then
+                  echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW" >> $GITHUB_ENV
+                else
+                  echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US" >> $GITHUB_ENV
+                fi
+                ;;
+            esac
           else
             # workflow_dispatch 手動觸發
             SELECTED_MARKET="${{ github.event.inputs.market }}"
@@ -80,7 +92,11 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || 'gemini-3.5-flash' }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || 'gemini-2.5-flash' }}
         run: |
+          if [ -z "$EXEC_CMD" ]; then
+            echo "❌ 錯誤：未定義執行命令 EXEC_CMD，排程或參數可能異常。"
+            exit 1
+          fi
           echo "🚀 正在執行命令: $EXEC_CMD"
           $EXEC_CMD

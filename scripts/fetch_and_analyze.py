@@ -167,10 +167,10 @@ def upsert_daily_report(client: Client, report_data: Dict[str, Any]) -> bool:
 # ----------------------------------------------------------------------
 # 股價獲取 (yfinance)
 # ----------------------------------------------------------------------
-def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
+def _fetch_single_ticker_price(symbol: str) -> Optional[Dict[str, Any]]:
     """
-    透過 yfinance 取得最新股價（盤中即時價或最新交易日收盤價）與前日收盤價及漲跌幅。
-    回退鏈：fast_info -> history(5d, 1d) -> history(1d, 5m)，相容美股、台股 (.TW) 與大盤指數。
+    透過 yfinance 取得單一代號的股價（盤中即時價或最新交易日收盤價）與前日收盤價及漲跌幅。
+    回退鏈：fast_info -> history(5d, 1d) -> history(1d, 5m)。
     """
     try:
         ticker = yf.Ticker(symbol)
@@ -233,7 +233,6 @@ def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
 
         # 驗證是否有有效股價
         if current_price is None or current_price <= 0:
-            logger.warning(f"⚠️ {symbol}: 無法取得有效的即時/收盤價格")
             return None
 
         # 若依然沒有前收盤價，嘗試從 ticker.info 取得
@@ -258,8 +257,76 @@ def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
             "prev_close": prev_close,
         }
     except Exception as e:
-        logger.error(f"❌ 抓取 {symbol} 股價資訊失敗: {e}")
+        logger.debug(f"查詢 {symbol} 股價異常: {e}")
         return None
+
+
+def fetch_stock_price(symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    透過 yfinance 取得最新股價（盤中即時價或最新交易日收盤價）與前日收盤價及漲跌幅。
+    回退鏈：fast_info -> history(5d, 1d) -> history(1d, 5m)。
+    全市場容錯：若台股以 .TW 結尾查無報價，自動回退嘗試上櫃市場代號 .TWO（反之亦然）。
+    """
+    # 1. 嘗試原始代號
+    res = _fetch_single_ticker_price(symbol)
+    if res:
+        res["resolved_symbol"] = symbol
+        return res
+
+    # 2. 台股自動回退機制：.TW -> .TWO 或 .TWO -> .TW
+    sym_upper = symbol.strip().upper()
+    if sym_upper.endswith(".TW"):
+        fallback_sym = symbol.rstrip()[:-3] + ".TWO"
+        logger.info(f"🔄 {symbol} 於上市市場查無報價，自動嘗試上櫃市場代號: {fallback_sym}...")
+        res_two = _fetch_single_ticker_price(fallback_sym)
+        if res_two:
+            logger.info(f"✅ 成功自上櫃市場 ({fallback_sym}) 獲取行情！")
+            res_two["resolved_symbol"] = fallback_sym
+            return res_two
+    elif sym_upper.endswith(".TWO"):
+        fallback_sym = symbol.rstrip()[:-4] + ".TW"
+        logger.info(f"🔄 {symbol} 於上櫃市場查無報價，自動嘗試上市市場代號: {fallback_sym}...")
+        res_tw = _fetch_single_ticker_price(fallback_sym)
+        if res_tw:
+            logger.info(f"✅ 成功自上市市場 ({fallback_sym}) 獲取行情！")
+            res_tw["resolved_symbol"] = fallback_sym
+            return res_tw
+
+    logger.warning(f"⚠️ {symbol}: 全市場歷經查詢與回退嘗試，均無法取得行情數據")
+    return None
+
+
+def enrich_stock_name(symbol: str, current_name: str, resolved_symbol: Optional[str] = None) -> str:
+    """
+    自動補齊股票公司名稱：當名稱為空、等於代號或僅為預設格式（如 '台股 8069'）時，
+    從 yfinance Ticker info 自動獲取官方公司名稱 (shortName / longName)。
+    """
+    clean_sym = symbol.strip().upper()
+    name_clean = (current_name or "").strip()
+
+    # 判斷是否需要自動補齊
+    need_enrich = (
+        not name_clean
+        or name_clean.upper() == clean_sym
+        or re.match(r"^台股\s*\d{4,6}$", name_clean)
+        or (name_clean.endswith(" Corp") and name_clean[:-5].strip() == clean_sym)
+    )
+
+    if not need_enrich:
+        return name_clean
+
+    lookup_sym = resolved_symbol or symbol
+    try:
+        t = yf.Ticker(lookup_sym)
+        info = t.info
+        cand_name = info.get("shortName") or info.get("longName")
+        if cand_name and isinstance(cand_name, str) and cand_name.strip():
+            logger.info(f"🏷️ 自動為 {symbol} 補齊官方公司名稱: {cand_name.strip()}")
+            return cand_name.strip()
+    except Exception as e:
+        logger.debug(f"自動補齊 {symbol} 名稱略過: {e}")
+
+    return name_clean or symbol
 
 
 # ----------------------------------------------------------------------
@@ -543,8 +610,34 @@ def main():
                 # 1. 抓取收盤價或盤中即時價與漲跌幅
                 price_info = fetch_stock_price(symbol)
                 if not price_info:
-                    logger.warning(f"⏩ 跳過 {symbol}：無法取得足夠的行情數據")
+                    logger.warning(f"⚠️ {symbol}: 無法取得行情數據，寫入防呆說明報告")
+                    report_date = datetime.now().strftime("%Y-%m-%d")
+                    fallback_record = {
+                        "report_date": report_date,
+                        "market": market_type,
+                        "symbol": symbol,
+                        "name": name,
+                        "close_price": None,
+                        "change_percent": 0.0,
+                        "sentiment": "中性",
+                        "headline": "查無報價（請確認股票代號是否正確）",
+                        "story_bullets": [
+                            "Yahoo Finance 目前查無此代號之即時或收盤數據。",
+                            "請確認代號拼寫或市場（台股上市為 .TW，上櫃為 .TWO）。",
+                            "若為無效標的，可點擊卡片右上角按鈕將其自自選移除。"
+                        ],
+                        "news_links": [],
+                    }
+                    upsert_daily_report(supabase_client, fallback_record)
                     continue
+
+                resolved_sym = price_info.get("resolved_symbol", symbol)
+                name = enrich_stock_name(symbol, name, resolved_sym)
+                if name != stock.get("name"):
+                    try:
+                        supabase_client.table("watchlist").update({"name": name}).eq("symbol", symbol).execute()
+                    except Exception:
+                        pass
 
                 report_date = price_info["report_date"]
                 close_price = price_info["close_price"]

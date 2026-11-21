@@ -1,9 +1,62 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, Component } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, ChevronUp, Loader2, ExternalLink } from 'lucide-react'
+import { ChevronDown, ChevronUp, Loader2, ExternalLink, AlertTriangle } from 'lucide-react'
 import { IOS_SPRING, TACTILE_TAP, LIST_ITEM_VARIANTS } from '../motion/iosMotion'
 
-export default function StockCard({ report, onRemove }) {
+/**
+ * 單張卡片 Error Boundary：隔離單一標的之渲染例外，避免任何髒資料引發全頁白屏
+ */
+export class StockCardErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('StockCard 渲染錯誤:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const { report, onRemove } = this.props
+      const sym = report?.symbol || '未知標的'
+      return (
+        <motion.article
+          layout="position"
+          className="ios-glass rounded-[28px] p-5 select-none border border-rose-500/20 bg-rose-500/[0.04]"
+        >
+          <div className="flex items-start justify-between">
+            <div className="flex items-center space-x-2.5">
+              <span className="w-8 h-8 rounded-full bg-rose-500/20 text-rose-300 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4" strokeWidth={2} />
+              </span>
+              <div>
+                <h2 className="text-[17px] font-bold text-white tracking-tight">{sym}</h2>
+                <p className="text-[12px] text-rose-300/80 mt-0.5">標的資料格式異常，已安全隔離</p>
+              </div>
+            </div>
+            {onRemove && (
+              <button
+                type="button"
+                onClick={() => onRemove(sym)}
+                className="h-7 px-3 rounded-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-medium transition-colors"
+              >
+                移除
+              </button>
+            )}
+          </div>
+        </motion.article>
+      )
+    }
+    return this.props.children
+  }
+}
+
+function StockCardContent({ report, onRemove }) {
   const [isNewsExpanded, setIsNewsExpanded] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const timerRef = useRef(null)
@@ -13,6 +66,18 @@ export default function StockCard({ report, onRemove }) {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
   }, [])
+
+  const {
+    symbol = '',
+    name = '',
+    market = 'US',
+    close_price,
+    change_percent,
+    sentiment,
+    headline,
+    story_bullets,
+    news_links,
+  } = report || {}
 
   const handleDeleteClick = (e) => {
     e.stopPropagation()
@@ -30,20 +95,9 @@ export default function StockCard({ report, onRemove }) {
     }
   }
 
-  const {
-    symbol = '',
-    name = '',
-    market = 'US',
-    close_price,
-    change_percent,
-    sentiment,
-    headline,
-    story_bullets,
-    news_links,
-  } = report || {}
-
   const isUS = market === 'US'
-  const numChangePct = change_percent != null ? Number(change_percent) : null
+  const numClose = close_price != null && Number.isFinite(Number(close_price)) ? Number(close_price) : null
+  const numChangePct = change_percent != null && Number.isFinite(Number(change_percent)) ? Number(change_percent) : null
   const isUp = numChangePct != null && numChangePct > 0
   const isDown = numChangePct != null && numChangePct < 0
 
@@ -73,15 +127,15 @@ export default function StockCard({ report, onRemove }) {
   const sentimentCls = 'bg-white/[0.09] text-white/80 text-[11px] px-2.5 py-0.5 rounded-full font-medium'
 
   // 價格格式化
-  const formattedPrice = close_price != null
+  const formattedPrice = numClose != null
     ? (isUS
-        ? `$${Number(close_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-        : `${Number(close_price).toLocaleString('zh-TW', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`)
-    : '—'
+        ? `$${numClose.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : `${numClose.toLocaleString('zh-TW', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`)
+    : null
 
   // 漲跌幅文字
-  const changePctText = change_percent != null
-    ? `${change_percent > 0 ? '+' : ''}${change_percent}%`
+  const changePctText = numChangePct != null
+    ? `${numChangePct > 0 ? '+' : ''}${numChangePct.toFixed(2)}%`
     : null
 
   // 安全解析陣列或 JSON 字串
@@ -99,8 +153,24 @@ export default function StockCard({ report, onRemove }) {
     return []
   }
 
-  const bullets = parseSafeArray(story_bullets)
-  const news = parseSafeArray(news_links)
+  const rawBullets = parseSafeArray(story_bullets)
+  const bullets = rawBullets
+    .map((b) => (typeof b === 'string' ? b : typeof b === 'object' && b !== null ? b.text || JSON.stringify(b) : ''))
+    .filter(Boolean)
+
+  const rawNews = parseSafeArray(news_links)
+  const news = rawNews
+    .map((item) => {
+      if (typeof item === 'string') return { title: item, url: '#' }
+      if (typeof item === 'object' && item !== null) {
+        return {
+          title: item.title || item.name || '相關報導',
+          url: item.url || item.link || '#',
+        }
+      }
+      return null
+    })
+    .filter(Boolean)
 
   return (
     <motion.article
@@ -120,14 +190,14 @@ export default function StockCard({ report, onRemove }) {
             {symbol}
           </h2>
           <p className="text-[13px] text-white/55 font-normal mt-0.5 leading-tight truncate max-w-[170px]">
-            {name}
+            {name || symbol}
           </p>
         </div>
 
         {/* Right: price + change capsule + direct delete button */}
         <div className="flex items-start space-x-2.5 flex-shrink-0">
           <div className="text-right">
-            {close_price != null ? (
+            {formattedPrice != null ? (
               <>
                 <div className={`text-[22px] font-semibold tracking-tight tabular ${trendTextColor}`}>
                   {formattedPrice}
@@ -143,7 +213,7 @@ export default function StockCard({ report, onRemove }) {
             ) : (
               <div className="flex items-center space-x-1.5 mt-1">
                 <Loader2 className="w-3.5 h-3.5 text-white/30 animate-spin" strokeWidth={1.75} />
-                <span className="text-[12px] text-white/30">分析中</span>
+                <span className="text-[12px] text-white/35 font-medium tracking-tight">同步中</span>
               </div>
             )}
           </div>
@@ -208,7 +278,7 @@ export default function StockCard({ report, onRemove }) {
       ) : (
         <div className="mt-3.5 pt-3 border-t border-white/[0.06] flex items-center space-x-2 text-[12px] text-white/40">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/70" />
-          <span>盤中報價 · 收盤後整理新聞</span>
+          <span>已加入自選 · 等待行情同步</span>
         </div>
       )}
 
@@ -277,5 +347,13 @@ export default function StockCard({ report, onRemove }) {
         </div>
       )}
     </motion.article>
+  )
+}
+
+export default function StockCard(props) {
+  return (
+    <StockCardErrorBoundary report={props.report} onRemove={props.onRemove}>
+      <StockCardContent {...props} />
+    </StockCardErrorBoundary>
   )
 }

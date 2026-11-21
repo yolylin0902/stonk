@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import logging
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -38,7 +39,8 @@ from fetch_and_analyze import (
     fetch_stock_price,
     fetch_google_news,
     analyze_stock_story,
-    upsert_daily_report
+    upsert_daily_report,
+    enrich_stock_name,
 )
 
 def process_single_stock(sb, item, configs):
@@ -50,8 +52,34 @@ def process_single_stock(sb, item, configs):
 
     price_info = fetch_stock_price(symbol)
     if not price_info:
-        logger.warning(f"⚠️ {symbol}: 無法獲取即時股價，跳過")
-        return False
+        logger.warning(f"⚠️ {symbol}: 無法獲取即時股價，寫入防呆說明報告脫離等待")
+        fallback_record = {
+            "report_date": datetime.now().strftime("%Y-%m-%d"),
+            "market": market,
+            "symbol": symbol,
+            "name": name,
+            "close_price": None,
+            "change_percent": 0.0,
+            "sentiment": "中性",
+            "headline": "查無報價（請確認股票代號是否正確）",
+            "story_bullets": [
+                "Yahoo Finance 目前查無此代號之即時或收盤行情數據。",
+                "請確認代號拼寫或市場類別（如台股上櫃代號為 .TWO）。",
+                "若為無效標的，可點擊卡片右上角按鈕將其自自選移除。"
+            ],
+            "news_links": [],
+        }
+        upsert_daily_report(sb, fallback_record)
+        return True
+
+    resolved_sym = price_info.get("resolved_symbol", symbol)
+    enriched_name = enrich_stock_name(symbol, name, resolved_sym)
+    if enriched_name and enriched_name != name:
+        name = enriched_name
+        try:
+            sb.table("watchlist").update({"name": name}).eq("symbol", symbol).execute()
+        except Exception:
+            pass
 
     report_date = price_info["report_date"]
     close_price = price_info["close_price"]

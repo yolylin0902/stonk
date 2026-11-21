@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, X, Loader2, Check, AlertCircle } from 'lucide-react'
 import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
@@ -10,16 +10,25 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
   const [nameVal, setNameVal] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
+  const inputRef = useRef(null)
 
   const isTW = market === 'TW'
 
   // 即時自動辨識標的與格式化代號
   const normalizedSymbol = useMemo(() => {
     let clean = inputVal.trim().toUpperCase()
-    if (isTW && /^\d{4,6}$/.test(clean)) {
-      clean = `${clean}.TW`
+    if (!clean) return ''
+    if (isTW) {
+      if (/^\d{4,6}$/.test(clean)) {
+        return `${clean}.TW`
+      }
+      return clean
+    } else {
+      if (/^[A-Z]{1,5}\.[A-Z]$/.test(clean)) {
+        return clean.replace('.', '-')
+      }
+      return clean
     }
-    return clean
   }, [inputVal, isTW])
 
   // 嘗試透過已知字典或模糊搜尋辨識
@@ -35,6 +44,9 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
   const handleExpand = () => {
     setIsExpanded(true)
     setFeedback({ type: '', message: '' })
+    setTimeout(() => {
+      inputRef.current?.focus()
+    }, 100)
   }
 
   const handleCollapse = () => {
@@ -49,11 +61,8 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
     setFeedback({ type: '', message: '' })
 
     let targetSymbol = normalizedSymbol
-    let targetName = nameVal.trim()
-
-    if (detectedInfo) {
+    if (detectedInfo && !targetSymbol) {
       targetSymbol = detectedInfo.symbol
-      if (!targetName) targetName = detectedInfo.name
     }
 
     if (!targetSymbol) {
@@ -66,6 +75,10 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
       return
     }
 
+    let targetName = nameVal.trim()
+    if (!targetName && detectedInfo?.name) {
+      targetName = detectedInfo.name
+    }
     if (!targetName) {
       targetName = targetSymbol
     }
@@ -82,6 +95,12 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
         setFeedback({ type: 'success', message: `已加入 ${targetSymbol} (${targetName})` })
         setInputVal('')
         setNameVal('')
+        setTimeout(() => {
+          inputRef.current?.focus()
+        }, 50)
+        setTimeout(() => {
+          setFeedback((prev) => (prev.type === 'success' ? { type: '', message: '' } : prev))
+        }, 3500)
       }
     } catch (err) {
       setFeedback({ type: 'error', message: err.message || '新增失敗' })
@@ -128,7 +147,7 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
                   新增{isTW ? '台股' : '美股'}自選股
                 </h3>
                 <p className="text-[12px] text-white/45 mt-0.5">
-                  輸入代號或名稱，即時加入個人收盤分析
+                  支援全市場任意代號，連續輸入立即追蹤
                 </p>
               </div>
               <motion.button
@@ -167,9 +186,10 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
               <div className="space-y-2">
                 <div className="relative">
                   <input
+                    ref={inputRef}
                     type="text"
                     autoFocus
-                    placeholder={isTW ? '輸入台股代號或名稱 (如 2330, 鴻海)' : '輸入美股代號或名稱 (如 NVDA, AAPL)'}
+                    placeholder={isTW ? '輸入台股代號或名稱 (如 2330, 8069, 鴻海)' : '輸入美股代號或名稱 (如 NVDA, RKLB, BRK-B)'}
                     value={inputVal}
                     onChange={(e) => setInputVal(e.target.value)}
                     className="w-full bg-white/[0.06] border border-white/[0.10] rounded-2xl px-4 py-3 text-[13px] text-white placeholder-white/30 focus:outline-none focus:border-white/[0.24] font-sans tracking-wide transition-colors"
@@ -192,10 +212,10 @@ export default function AddStockCard({ market, onAddStock, existingSymbols = [] 
                 )}
 
                 {/* 選填自訂名稱 */}
-                {!detectedInfo && inputVal.trim() && (
+                {inputVal.trim() && (
                   <input
                     type="text"
-                    placeholder="選填公司名稱 (留空預設使用代號)"
+                    placeholder="選填公司名稱 (留空由系統自動聯網補齊)"
                     value={nameVal}
                     onChange={(e) => setNameVal(e.target.value)}
                     className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-3.5 py-2 text-[12px] text-white placeholder-white/25 focus:outline-none focus:border-white/[0.18] font-sans transition-colors"

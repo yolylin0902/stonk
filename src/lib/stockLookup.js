@@ -148,15 +148,20 @@ export function searchStocksTwoWay(rawQuery, limit = 8) {
  */
 export function autoLookupStock(rawInput) {
   if (!rawInput || !rawInput.trim()) return null
-  const clean = rawInput.trim().toUpperCase()
+  let clean = rawInput.trim().toUpperCase()
 
-  // 1. 先用雙向搜尋找最佳結果
+  // 美股特殊代號處理：BRK.B -> BRK-B
+  if (/^[A-Z]{1,5}\.[A-Z]$/.test(clean)) {
+    clean = clean.replace('.', '-')
+  }
+
+  // 1. 先用雙向搜尋找最佳已知結果
   const searchResults = searchStocksTwoWay(rawInput, 1)
   if (searchResults.length > 0) {
     return searchResults[0]
   }
 
-  // 2. 判斷是否為台股純數字格式
+  // 2. 判斷是否為台股格式 (純數字 4~6 碼，或帶有 .TW / .TWO)
   if (/^\d{4,6}(\.TW|\.TWO)?$/.test(clean)) {
     const baseCode = clean.replace(/\.TW|\.TWO/g, '')
     return {
@@ -166,11 +171,11 @@ export function autoLookupStock(rawInput) {
     }
   }
 
-  // 3. 若為英文字母代號
-  if (/^[A-Z]{1,6}$/.test(clean)) {
+  // 3. 若為美股代號 (支援一般英文字母或含連字號如 BRK-B)
+  if (/^[A-Z0-9\-]{1,8}$/.test(clean)) {
     return {
       symbol: clean,
-      name: `${clean} Corp`,
+      name: clean,
       market: 'US'
     }
   }

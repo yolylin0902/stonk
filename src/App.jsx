@@ -21,8 +21,8 @@ export const isMarketIndex = (symbol) => {
   return false
 }
 
-// 待分析個股的輪詢上限（每次 4 秒，最多 6 次約 24 秒），避免無休止請求消耗 Supabase 配額
-const MAX_POLL_ATTEMPTS = 6
+// 待分析個股的輪詢上限（每次 5 秒，最多 15 次約 75 秒），避免無休止請求消耗 Supabase 配額
+const MAX_POLL_ATTEMPTS = 15
 
 export default function App() {
   // 帳號與 Session 管理
@@ -157,9 +157,12 @@ export default function App() {
   }, [])
 
   // 2. 撈取當日指定市場的報告：指數區獨立於 watchlist；持股區嚴格比對個人自選清單
-  const loadReports = useCallback(async (targetMarket, targetDate) => {
+  // isSilent: 背景靜默刷新（如定時輪詢或新增後同步），絕不切換全域 loading 避免破壞 DOM 與輸入焦點
+  const loadReports = useCallback(async (targetMarket, targetDate, isSilent = false) => {
     try {
-      setLoading(true)
+      if (!isSilent) {
+        setLoading(true)
+      }
       setErrorMsg('')
 
       // 撈取指定日期的全部報告 (包含指數與各股票)
@@ -221,13 +224,31 @@ export default function App() {
       )
 
       const combined = [...indexReports, ...userStockReports]
-      setReports(combined)
+      setReports((prevReports) => {
+        // 比對新舊資料是否有實質變化，避免無謂 re-render 導致頁面重繪
+        if (prevReports.length !== combined.length) return combined
+        const isDifferent = combined.some((item, i) => {
+          const old = prevReports[i]
+          if (!old) return true
+          return (
+            item.symbol !== old.symbol ||
+            item.close_price !== old.close_price ||
+            item.change_percent !== old.change_percent ||
+            item.headline !== old.headline ||
+            item.isPending !== old.isPending ||
+            item.name !== old.name
+          )
+        })
+        return isDifferent ? combined : prevReports
+      })
     } catch (err) {
       console.error('撈取報告失敗:', err)
       setErrorMsg('載入報告失敗：' + (err.message || '請檢查網路連線或金鑰設定'))
       setReports([])
     } finally {
-      setLoading(false)
+      if (!isSilent) {
+        setLoading(false)
+      }
       setRefreshing(false)
     }
   }, [pollTimedOut])
@@ -255,7 +276,7 @@ export default function App() {
     setPollTimedOut(false)
     const latestDate = await loadAvailableDates(market)
     const targetDate = selectedDate || latestDate
-    await loadReports(market, targetDate)
+    await loadReports(market, targetDate, true)
   }
 
   // 登入後初始加載
@@ -277,7 +298,7 @@ export default function App() {
       .join(',')
   }, [reports])
 
-  // 若目前畫面上有尚未分析完成的新自選股，自動短暫輪詢；超過 MAX_POLL_ATTEMPTS 次自動停止
+  // 若目前畫面上有尚未分析完成的新自選股，自動背景靜默輪詢（每 5 秒檢查一次，最多 15 次約 75 秒）
   useEffect(() => {
     if (!pendingKey) {
       pollCountRef.current = 0
@@ -295,8 +316,8 @@ export default function App() {
         setPollTimedOut(true)
         return
       }
-      loadReports(market, selectedDate)
-    }, 4000)
+      loadReports(market, selectedDate, true)
+    }, 5000)
 
     return () => clearInterval(timer)
   }, [pendingKey, market, selectedDate, loadReports])
@@ -333,7 +354,7 @@ export default function App() {
       pollCountRef.current = 0
       setPollTimedOut(false)
       const targetDate = selectedDate || (await loadAvailableDates(market))
-      await loadReports(market, targetDate)
+      await loadReports(market, targetDate, true)
       return true
     } catch (err) {
       console.error('新增股票失敗:', err)
@@ -654,7 +675,7 @@ export default function App() {
                           <div className="space-y-3">
                             <AnimatePresence mode="popLayout" initial={false}>
                               {indexReports.map((report) => (
-                                <StockCard key={report.id || report.symbol} report={report} />
+                                <StockCard key={report.symbol} report={report} />
                               ))}
                             </AnimatePresence>
                           </div>
@@ -685,7 +706,7 @@ export default function App() {
                           <AnimatePresence mode="popLayout" initial={false}>
                             {userStockReports.map((report) => (
                               <StockCard
-                                key={report.id || report.symbol}
+                                key={report.symbol}
                                 report={report}
                                 onRemove={handleRemoveStock}
                               />

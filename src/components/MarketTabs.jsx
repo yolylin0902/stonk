@@ -1,9 +1,9 @@
 import React from 'react'
 
-export default function MarketTabs({ activeMarket, onSelectMarket, counts }) {
+export default function MarketTabs({ activeMarket, onSelectMarket }) {
   const tabs = [
-    { key: 'US', label: '美股', count: counts.US || 0 },
-    { key: 'TW', label: '台股', count: counts.TW || 0 },
+    { key: 'US', label: '美股' },
+    { key: 'TW', label: '台股' },
   ]
 
   return (
@@ -22,17 +22,14 @@ export default function MarketTabs({ activeMarket, onSelectMarket, counts }) {
             key={tab.key}
             type="button"
             onClick={() => onSelectMarket(tab.key)}
-            className="relative z-10 flex-1 flex items-center justify-center space-x-2 py-2 rounded-full text-[14px] font-medium transition-colors duration-200 active:scale-[0.98]"
+            className="relative z-10 flex-1 flex items-center justify-center py-2 rounded-full text-[14px] font-medium transition-colors duration-200 active:scale-[0.98]"
           >
-            <span className={isActive ? 'text-white font-semibold' : 'text-white/45 hover:text-white/70'}>
-              {tab.label}
-            </span>
             <span
-              className={`text-[11px] font-semibold tabular transition-colors duration-200 ${
-                isActive ? 'text-white/75' : 'text-white/25'
+              className={`transition-colors duration-200 ${
+                isActive ? 'text-white font-semibold' : 'text-white/45 hover:text-white/70'
               }`}
             >
-              {tab.count}
+              {tab.label}
             </span>
           </button>
         )

@@ -38,7 +38,6 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
-  const [marketCounts, setMarketCounts] = useState({ US: 0, TW: 0 })
 
   // 待分析個股的計數器與超時狀態
   const pollCountRef = useRef(0)
@@ -230,37 +229,17 @@ export default function App() {
     }
   }, [pollTimedOut])
 
-  // 3. 統計各市場的報告數量
-  const loadMarketCounts = useCallback(async (targetDate) => {
-    try {
-      let query = supabase.from('daily_reports').select('market')
-      if (targetDate) {
-        query = query.eq('report_date', targetDate)
-      }
-      const { data } = await query
-      if (data) {
-        const us = data.filter((d) => d.market === 'US').length
-        const tw = data.filter((d) => d.market === 'TW').length
-        setMarketCounts({ US: us, TW: tw })
-      }
-    } catch {
-      // 靜默
-    }
-  }, [])
-
   // 市場切換處理
   const handleMarketChange = async (newMarket) => {
     setMarket(newMarket)
     const latestDate = await loadAvailableDates(newMarket)
     await loadReports(newMarket, latestDate)
-    await loadMarketCounts(latestDate)
   }
 
   // 日期切換處理
   const handleDateChange = async (newDate) => {
     setSelectedDate(newDate)
     await loadReports(market, newDate)
-    await loadMarketCounts(newDate)
   }
 
   // 手動重新整理
@@ -271,7 +250,6 @@ export default function App() {
     const latestDate = await loadAvailableDates(market)
     const targetDate = selectedDate || latestDate
     await loadReports(market, targetDate)
-    await loadMarketCounts(targetDate)
   }
 
   // 登入後初始加載
@@ -280,10 +258,9 @@ export default function App() {
     async function init() {
       const latestDate = await loadAvailableDates('US')
       await loadReports('US', latestDate)
-      await loadMarketCounts(latestDate)
     }
     init()
-  }, [session, loadAvailableDates, loadReports, loadMarketCounts])
+  }, [session, loadAvailableDates, loadReports])
 
   // 穩定的待分析個股 Key，避免 reports 物件頻繁異動造成重複觸發
   const pendingKey = useMemo(() => {
@@ -531,7 +508,6 @@ export default function App() {
         <MarketTabs
           activeMarket={market}
           onSelectMarket={handleMarketChange}
-          counts={marketCounts}
         />
 
         {/* 日期選擇器與持倉過濾開關 */}

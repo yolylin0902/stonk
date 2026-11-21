@@ -105,8 +105,14 @@ def main_loop(poll_interval: int = 8, single_run: bool = False):
             d_res = sb.table("daily_reports").select("symbol, report_date").execute()
             existing_symbols = set(r["symbol"] for r in (d_res.data or []))
 
-            # 找出尚未產出 daily_reports 的標的
-            missing = [w for w in watchlist if w["symbol"] not in existing_symbols]
+            # 找出尚未產出 daily_reports 的標的（依 symbol 去重避免重複分析）
+            missing = []
+            seen_missing = set()
+            for w in watchlist:
+                sym = (w.get("symbol") or "").strip().upper()
+                if sym and sym not in existing_symbols and sym not in seen_missing:
+                    seen_missing.add(sym)
+                    missing.append(w)
 
             if missing:
                 logger.info(f"🔍 偵測到 {len(missing)} 檔新加入且尚未分析之個股: {[m['symbol'] for m in missing]}")

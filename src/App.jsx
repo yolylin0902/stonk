@@ -6,13 +6,6 @@ import StockCard from './components/StockCard'
 import WatchlistModal from './components/WatchlistModal'
 import EmptyState from './components/EmptyState'
 import ParkSleepSection from './components/ParkSleepSection'
-import FamilyProfileBar from './components/FamilyProfileBar'
-import {
-  getStoredProfiles,
-  saveStoredProfiles,
-  getActiveProfileId,
-  setActiveProfileId
-} from './lib/profileManager'
 import { supabase } from './lib/supabase'
 import { Loader2, BarChart3, Layers, Plus } from 'lucide-react'
 
@@ -31,6 +24,14 @@ export const isMarketIndex = (symbol) => {
 const MAX_POLL_ATTEMPTS = 6
 
 export default function App() {
+  // 帳號與 Session 管理
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authSubmitting, setAuthSubmitting] = useState(false)
+  const [authError, setAuthError] = useState('')
+  const [nicknameInput, setNicknameInput] = useState('')
+
+  // 市場與報表狀態
   const [market, setMarket] = useState('US') // 'US' or 'TW'
   const [reports, setReports] = useState([])
   const [availableDates, setAvailableDates] = useState([])
@@ -45,53 +46,76 @@ export default function App() {
   const pollCountRef = useRef(0)
   const [pollTimedOut, setPollTimedOut] = useState(false)
 
-  // 使用者狀態管理 (持久化於 localStorage)
-  const [profiles, setProfiles] = useState(() => getStoredProfiles())
-  const [activeProfileId, setActiveProfile] = useState(() => getActiveProfileId())
-  const [cardViewMode, setCardViewMode] = useState('STOCKS') // 'STOCKS' (自選個股) 或 'INDEX' (主要指數)
+  // 檢視模式：自選個股 (STOCKS) 或 主要指數 (INDEX)
+  const [cardViewMode, setCardViewMode] = useState('STOCKS')
 
-  const currentProfile = useMemo(() => {
-    return profiles.find((p) => p.id === activeProfileId) || profiles[0]
-  }, [profiles, activeProfileId])
+  // 監聽 Supabase 驗證狀態
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      setSession(currentSession)
+      setAuthLoading(false)
+    })
 
-  // 切換使用者
-  const handleSelectProfile = (id) => {
-    setActiveProfile(id)
-    setActiveProfileId(id)
-  }
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+      setSession(currentSession)
+      setAuthLoading(false)
+    })
 
-  // 新增使用者
-  const handleAddProfile = (newProfile) => {
-    const updated = [...profiles, newProfile]
-    setProfiles(updated)
-    saveStoredProfiles(updated)
-    handleSelectProfile(newProfile.id)
-  }
+    return () => subscription.unsubscribe()
+  }, [])
 
-  // 刪除使用者
-  const handleDeleteProfile = (id) => {
-    const updated = profiles.filter((p) => p.id !== id)
-    setProfiles(updated)
-    saveStoredProfiles(updated)
-    if (activeProfileId === id && updated.length > 0) {
-      handleSelectProfile(updated[0].id)
+  // Google OAuth 登入
+  const handleGoogleSignIn = async () => {
+    try {
+      setAuthSubmitting(true)
+      setAuthError('')
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin + window.location.pathname,
+        },
+      })
+      if (error) throw error
+    } catch (err) {
+      setAuthError(err.message || 'Google 登入失敗')
+      setAuthSubmitting(false)
     }
   }
 
-  // 更新當前使用者的持股清單
-  const handleUpdateProfileHoldings = (symbol, isAdd) => {
-    const updated = profiles.map((p) => {
-      if (p.id === activeProfileId) {
-        const currentHoldings = p.holdings || []
-        const newHoldings = isAdd
-          ? Array.from(new Set([...currentHoldings, symbol]))
-          : currentHoldings.filter((s) => s !== symbol)
-        return { ...p, holdings: newHoldings }
-      }
-      return p
-    })
-    setProfiles(updated)
-    saveStoredProfiles(updated)
+  // 快速暱稱匿名登入（具備永久獨立 auth.uid()）
+  const handleAnonymousSignIn = async (e) => {
+    e.preventDefault()
+    const trimmed = nicknameInput.trim()
+    if (!trimmed) {
+      setAuthError('請輸入您的暱稱')
+      return
+    }
+    try {
+      setAuthSubmitting(true)
+      setAuthError('')
+      const { error } = await supabase.auth.signInAnonymously({
+        options: {
+          data: {
+            display_name: trimmed,
+          },
+        },
+      })
+      if (error) throw error
+    } catch (err) {
+      setAuthError(err.message || '快速登入失敗')
+      setAuthSubmitting(false)
+    }
+  }
+
+  // 登出
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut()
+    } catch (err) {
+      console.error('登出失敗:', err)
+    }
   }
 
   // 1. 撈取特定市場的所有有資料的日期
@@ -132,7 +156,7 @@ export default function App() {
     }
   }, [])
 
-  // 2. 撈取當日指定市場的報告，並整合 watchlist 中剛新增尚未爬取報告的標的
+  // 2. 撈取當日指定市場的報告，並整合個人 watchlist 中剛新增尚未爬取報告的標的
   const loadReports = useCallback(async (targetMarket, targetDate) => {
     try {
       setLoading(true)
@@ -145,14 +169,14 @@ export default function App() {
       }
       const { data: allData } = await allQuery
 
-      // 取得自選股表以確保使用者新加入的個股 (如 SMCI) 即使尚未爬蟲也能顯示
+      // 取得個人自選股表 (RLS 會自動篩選該使用者的標的)
       const { data: watchData } = await supabase.from('watchlist').select('*')
 
       const currentMarketReports = (allData || []).filter(
         (r) => r.market === targetMarket
       )
 
-      // 檢查是否有在 watchlist 但尚未產出 daily_reports 的標的
+      // 檢查是否有在個人 watchlist 但尚未產出 daily_reports 的標的
       const missingFromReports = (watchData || [])
         .filter(
           (w) =>
@@ -205,7 +229,7 @@ export default function App() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [pollTimedOut])
 
   // 3. 統計各市場的報告數量
   const loadMarketCounts = useCallback(async (targetDate) => {
@@ -251,15 +275,16 @@ export default function App() {
     await loadMarketCounts(targetDate)
   }
 
-  // 初始加載
+  // 登入後初始加載
   useEffect(() => {
+    if (!session) return
     async function init() {
       const latestDate = await loadAvailableDates('US')
       await loadReports('US', latestDate)
       await loadMarketCounts(latestDate)
     }
     init()
-  }, [loadAvailableDates, loadReports, loadMarketCounts])
+  }, [session, loadAvailableDates, loadReports, loadMarketCounts])
 
   // 穩定的待分析個股 Key，避免 reports 物件頻繁異動造成重複觸發
   const pendingKey = useMemo(() => {
@@ -270,7 +295,7 @@ export default function App() {
       .join(',')
   }, [reports])
 
-  // 若目前畫面上有尚未分析完成的新自選股，自動短暫輪詢；超過 MAX_POLL_ATTEMPTS 次自動停止，避免浪費 API 配額
+  // 若目前畫面上有尚未分析完成的新自選股，自動短暫輪詢；超過 MAX_POLL_ATTEMPTS 次自動停止
   useEffect(() => {
     if (!pendingKey) {
       pollCountRef.current = 0
@@ -303,6 +328,131 @@ export default function App() {
     return reports.filter((r) => !isMarketIndex(r.symbol))
   }, [reports])
 
+  // Auth 載入中畫面
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-transparent text-white flex items-center justify-center">
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 -z-10 pointer-events-none overflow-hidden"
+          style={{
+            background: `
+              radial-gradient(circle at 18% 15%, rgba(180, 200, 230, 0.16), transparent 45%),
+              radial-gradient(circle at 85% 48%, rgba(130, 155, 195, 0.13), transparent 50%),
+              radial-gradient(circle at 25% 85%, rgba(165, 180, 205, 0.12), transparent 45%)
+            `
+          }}
+        />
+        <div className="flex flex-col items-center space-y-3">
+          <Loader2 className="w-7 h-7 animate-spin text-white/30" strokeWidth={1.75} />
+          <span className="text-xs text-white/40 font-medium tracking-wide">載入中...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // 未登入：呈現 Liquid Glass 登入視窗
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-transparent text-white flex flex-col justify-center items-center px-4 py-8">
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 -z-10 pointer-events-none overflow-hidden"
+          style={{
+            background: `
+              radial-gradient(circle at 18% 15%, rgba(180, 200, 230, 0.16), transparent 45%),
+              radial-gradient(circle at 85% 48%, rgba(130, 155, 195, 0.13), transparent 50%),
+              radial-gradient(circle at 25% 85%, rgba(165, 180, 205, 0.12), transparent 45%)
+            `
+          }}
+        />
+
+        <div className="w-full max-w-sm ios-glass rounded-[32px] p-7 border border-white/[0.12] shadow-2xl space-y-6">
+          <div className="text-center space-y-1.5">
+            <span className="text-[11px] font-semibold tracking-widest uppercase text-white/40">
+              Personalized Watchlist
+            </span>
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              盤後市場分析
+            </h1>
+            <p className="text-xs text-white/50 leading-relaxed pt-1">
+              個人獨立持股追蹤 · AI 收盤故事 · 即時避難雷達
+            </p>
+          </div>
+
+          {authError && (
+            <div className="p-3 rounded-2xl bg-[#FB7185]/[0.10] border border-[#FB7185]/[0.18] text-[#FDA4AF]/90 text-xs">
+              {authError}
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {/* Google 登入按鈕 */}
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={authSubmitting}
+              className="w-full py-3.5 px-4 rounded-2xl bg-white/[0.12] hover:bg-white/[0.18] active:scale-[0.98] transition-all duration-150 flex items-center justify-center space-x-2.5 font-medium text-[13px] text-white border border-white/[0.14] shadow-sm disabled:opacity-40"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12.24 10.285V13.82h5.03c-.22 1.18-.89 2.18-1.91 2.85v2.37h3.09c1.81-1.67 2.85-4.13 2.85-7.06 0-.68-.06-1.34-.17-1.98l-8.89.285z" fill="#FFFFFF" fillOpacity="0.85"/>
+                <path d="M12 21.6c2.6 0 4.79-.86 6.39-2.34l-3.09-2.37c-.86.58-1.96.93-3.3.93-2.53 0-4.68-1.71-5.45-4.01H3.35v2.45A9.6 9.6 0 0 0 12 21.6z" fill="#FFFFFF" fillOpacity="0.7"/>
+                <path d="M6.55 13.81c-.2-.59-.31-1.22-.31-1.87s.11-1.28.31-1.87V7.62H3.35A9.593 9.593 0 0 0 2.4 12c0 1.55.37 3.01.95 4.38l3.2-2.57z" fill="#FFFFFF" fillOpacity="0.6"/>
+                <path d="M12 5.74c1.41 0 2.68.49 3.68 1.44l2.76-2.76C16.78 2.86 14.59 2 12 2 7.74 2 4.09 4.45 2.4 8.04l3.2 2.49c.77-2.3 2.92-4.01 5.45-4.01z" fill="#FFFFFF" fillOpacity="0.75"/>
+              </svg>
+              <span>使用 Google 帳號登入</span>
+            </button>
+
+            {/* 分隔線 */}
+            <div className="relative py-1 flex items-center justify-center">
+              <div className="border-t border-white/[0.08] w-full" />
+              <span className="bg-[#0e1219] px-3 text-[11px] text-white/35 font-medium rounded-full absolute">
+                或快速暱稱登入
+              </span>
+            </div>
+
+            {/* 快速暱稱永久登入表單 */}
+            <form onSubmit={handleAnonymousSignIn} className="space-y-3">
+              <div>
+                <input
+                  type="text"
+                  placeholder="輸入你的暱稱 (如 菜鳥韭菜 / 投資家)"
+                  value={nicknameInput}
+                  onChange={(e) => setNicknameInput(e.target.value)}
+                  className="w-full bg-white/[0.06] border border-white/[0.10] rounded-2xl px-4 py-3 text-[13px] text-white placeholder-white/30 focus:outline-none focus:border-white/[0.24] font-sans tracking-wide transition-colors"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={authSubmitting || !nicknameInput.trim()}
+                className="w-full py-3 px-4 rounded-2xl bg-white/[0.08] hover:bg-white/[0.14] active:scale-[0.98] transition-all duration-150 flex items-center justify-center space-x-2 font-medium text-[13px] text-white/90 border border-white/[0.10] disabled:opacity-40"
+              >
+                {authSubmitting ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white/70" strokeWidth={1.75} />
+                ) : (
+                  <span>快速開始 (匿名永久登入)</span>
+                )}
+              </button>
+            </form>
+          </div>
+
+          {/* 隱私權政策連結 */}
+          <div className="pt-2 text-center border-t border-white/[0.06]">
+            <a
+              href="./privacy.html"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-white/40 hover:text-white/70 transition-colors underline underline-offset-4"
+            >
+              隱私權政策 (Privacy Policy)
+            </a>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // 已登入：展示主儀表板
   return (
     <div className="min-h-screen bg-transparent text-white flex flex-col">
       {/* 玻璃後方低彩度光影（左上、右中、左下 3 團冷銀灰與深海霧藍，滑動時呈現通透折射） */}
@@ -319,6 +469,8 @@ export default function App() {
       />
       {/* 頂部導航 */}
       <Header
+        user={session.user}
+        onSignOut={handleSignOut}
         onOpenWatchlist={() => setIsWatchlistModalOpen(true)}
         onRefresh={handleRefresh}
         isRefreshing={refreshing}
@@ -326,15 +478,6 @@ export default function App() {
 
       {/* 主內容區塊 - Mobile-First 容器 */}
       <main className="flex-1 max-w-md w-full mx-auto px-4 py-4 space-y-4">
-        {/* 使用者模式切換欄位 */}
-        <FamilyProfileBar
-          profiles={profiles}
-          activeProfileId={activeProfileId}
-          onSelectProfile={handleSelectProfile}
-          onAddProfile={handleAddProfile}
-          onDeleteProfile={handleDeleteProfile}
-        />
-
         {/* 市場頁籤切換 (美股盤後 / 台股盤後) */}
         <MarketTabs
           activeMarket={market}
@@ -477,8 +620,7 @@ export default function App() {
         isOpen={isWatchlistModalOpen}
         onClose={() => setIsWatchlistModalOpen(false)}
         onUpdated={handleRefresh}
-        currentProfile={currentProfile}
-        onUpdateProfileHoldings={handleUpdateProfileHoldings}
+        user={session.user}
       />
     </div>
   )

@@ -78,9 +78,13 @@ except ImportError:
 # 環境變數與配置檢查
 # ----------------------------------------------------------------------
 def get_env_configs() -> Dict[str, str]:
-    """取得並驗證必要的環境變數。"""
+    """取得並驗證必要的環境變數（優先支援 SERVICE_ROLE_KEY 以穿透 RLS 讀取各使用者清單）。"""
     supabase_url = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
+    supabase_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_KEY")
+        or os.getenv("VITE_SUPABASE_ANON_KEY")
+    )
     gemini_api_key = os.getenv("GEMINI_API_KEY")
     gemini_model = (os.getenv("GEMINI_MODEL") or "gemini-2.5-flash").strip() or "gemini-2.5-flash"
 
@@ -88,7 +92,7 @@ def get_env_configs() -> Dict[str, str]:
     if not supabase_url:
         missing.append("SUPABASE_URL (或 VITE_SUPABASE_URL)")
     if not supabase_key:
-        missing.append("SUPABASE_KEY (或 VITE_SUPABASE_ANON_KEY)")
+        missing.append("SUPABASE_SERVICE_ROLE_KEY 或 SUPABASE_KEY (或 VITE_SUPABASE_ANON_KEY)")
     if not gemini_api_key:
         missing.append("GEMINI_API_KEY")
 
@@ -118,25 +122,30 @@ def init_supabase(url: str, key: str) -> Client:
 
 
 def fetch_watchlist(client: Client, market: Optional[str] = None) -> List[Dict[str, Any]]:
-    """從 Supabase 的 watchlist 資料表讀取自選股清單。"""
+    """從 Supabase 的 watchlist 資料表讀取自選股清單，並依 symbol 去重。"""
     try:
         query = client.table("watchlist").select("id, symbol, name, market")
         if market:
             query = query.eq("market", market.upper())
         response = query.order("symbol").execute()
-        watchlist = response.data or []
-        logger.info(f"✅ 成功從 Supabase 讀取 {len(watchlist)} 筆自選股 (市場篩選: {market or '全部'})")
-        return watchlist
+        raw_list = response.data or []
+
+        # 依 symbol 去重 (Deduplicate)，避免多人追蹤同一檔股票時重複抓取與呼叫 AI
+        unique_stocks: List[Dict[str, Any]] = []
+        seen_symbols = set()
+        for item in raw_list:
+            sym = (item.get("symbol") or "").strip().upper()
+            if sym and sym not in seen_symbols:
+                seen_symbols.add(sym)
+                unique_stocks.append(item)
+
+        logger.info(
+            f"✅ 成功從 Supabase 讀取 {len(raw_list)} 筆自選股，去重後共 {len(unique_stocks)} 檔 (市場篩選: {market or '全部'})"
+        )
+        return unique_stocks
     except Exception as e:
         err_msg = str(e)
         logger.error(f"❌ 讀取 watchlist 資料失敗: {err_msg}")
-        if "42501" in err_msg or "permission denied" in err_msg:
-            logger.error(
-                "💡 權限不足提示：請在 Supabase SQL Editor 執行以下 SQL 授權 anon 角色：\n"
-                "GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;\n"
-                "GRANT ALL ON TABLE public.watchlist TO anon, authenticated, service_role;\n"
-                "GRANT ALL ON TABLE public.daily_reports TO anon, authenticated, service_role;\n"
-            )
         return []
 
 
@@ -516,11 +525,11 @@ def main():
                 if success:
                     total_succeeded += 1
 
-                # 稍微延遲避免頻率限制
-                time.sleep(1)
+                # 延遲 4 秒保護 Gemini 免費版 15 RPM 限制
+                time.sleep(4)
             except Exception as stock_err:
                 logger.error(f"❌ 處理 {stock.get('symbol', '未知標的')} 時發生未預期例外: {stock_err}，已隔離跳過，不影響其他股票")
-                time.sleep(1)
+                time.sleep(2)
                 continue
 
     logger.info(f"\n==========================================")

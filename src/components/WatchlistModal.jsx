@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { X, Plus, Trash2, AlertCircle, Check, Loader2, CheckSquare, Square, Search } from 'lucide-react'
+import { X, Plus, Trash2, AlertCircle, Check, Loader2, Search } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
 
@@ -7,8 +7,7 @@ export default function WatchlistModal({
   isOpen,
   onClose,
   onUpdated,
-  currentProfile,
-  onUpdateProfileHoldings
+  user,
 }) {
   const [watchlist, setWatchlist] = useState([])
   const [reportsMap, setReportsMap] = useState({})
@@ -39,20 +38,25 @@ export default function WatchlistModal({
     }
   }, [isOpen])
 
-  // 讀取自選股清單（同時交叉比對 daily_reports，讀取最新股價、漲跌幅與情緒資訊）
+  // 讀取個人自選股清單（比對 daily_reports 最新行情）
   const loadWatchlist = async () => {
     try {
       setLoading(true)
-      // 1. 撈取 watchlist 表
-      const { data: watchData, error: wError } = await supabase
+      // 1. 撈取個人 watchlist (RLS 會自動依 auth.uid() 隔離)
+      let query = supabase
         .from('watchlist')
         .select('*')
         .order('market')
         .order('symbol')
 
+      if (user?.id) {
+        query = query.eq('user_id', user.id)
+      }
+
+      const { data: watchData, error: wError } = await query
       if (wError) throw wError
 
-      // 2. 撈取 daily_reports 中所有現存的個股資訊 (包含價格、漲跌幅、情緒)
+      // 2. 撈取 daily_reports 中現存的最新個股資訊 (價格、漲跌幅)
       const { data: drData } = await supabase
         .from('daily_reports')
         .select('symbol, name, market, close_price, change_percent, sentiment, headline')
@@ -65,24 +69,8 @@ export default function WatchlistModal({
       }
       setReportsMap(rMap)
 
-      const existingSymbols = new Set((watchData || []).map((w) => w.symbol))
-      const extraFromReports = []
-
-      if (drData) {
-        for (const dr of drData) {
-          if (!existingSymbols.has(dr.symbol) && !extraFromReports.some((e) => e.symbol === dr.symbol)) {
-            extraFromReports.push({
-              id: 'dr_' + dr.symbol,
-              symbol: dr.symbol,
-              name: dr.name || dr.symbol,
-              market: dr.market || 'US',
-              isOrphaned: true
-            })
-          }
-        }
-      }
-
-      setWatchlist([...(watchData || []), ...extraFromReports])
+      // 僅使用使用者自己的自選股，不注入歷史孤兒股票
+      setWatchlist(watchData || [])
     } catch (err) {
       console.error('讀取自選股失敗:', err)
       setFeedback({ type: 'error', message: '讀取自選股失敗：' + (err.message || '連線異常') })
@@ -91,9 +79,9 @@ export default function WatchlistModal({
     }
   }
 
-  // 選取並加入股票（支援點擊搜尋建議直接加入）
+  // 選取並加入股票
   const handleSelectAndAddStock = async (stockInfo) => {
-    if (!stockInfo) return
+    if (!stockInfo || !user) return
     const { symbol: cleanSymbol, name: cleanName, market: cleanMarket } = stockInfo
 
     try {
@@ -102,6 +90,7 @@ export default function WatchlistModal({
 
       const { error } = await supabase.from('watchlist').insert([
         {
+          user_id: user.id,
           symbol: cleanSymbol,
           name: cleanName,
           market: cleanMarket,
@@ -110,25 +99,12 @@ export default function WatchlistModal({
 
       if (error) {
         if (error.code === '23505') {
-          // 已存在於資料庫，但自動幫當前成員打勾加入持倉
-          if (currentProfile && onUpdateProfileHoldings) {
-            onUpdateProfileHoldings(cleanSymbol, true)
-            setFeedback({ type: 'success', message: `${cleanName} (${cleanSymbol}) 已加入持倉` })
-          } else {
-            setFeedback({ type: 'error', message: `${cleanSymbol} 已在觀察庫中！` })
-          }
+          setFeedback({ type: 'error', message: `${cleanSymbol} 已在您的自選清單中！` })
           setSymbolInput('')
           setIsDropdownFocused(false)
-          loadWatchlist()
-          if (onUpdated) onUpdated()
           return
         }
         throw error
-      }
-
-      // 新增成功，自動勾選加入當前使用者持倉
-      if (currentProfile && onUpdateProfileHoldings) {
-        onUpdateProfileHoldings(cleanSymbol, true)
       }
 
       setFeedback({
@@ -162,39 +138,22 @@ export default function WatchlistModal({
     await handleSelectAndAddStock(stockInfo)
   }
 
-  // 徹底刪除股票：同時清除 watchlist 與 daily_reports 報告，解決打錯名稱 (如 SMCI 美光) 刪不掉的問題
+  // 從自選股移除（僅刪除個人的 watchlist 記錄，嚴禁刪除共用的 daily_reports）
   const handleDeleteStock = async (id, stockName, stockSymbol) => {
-    if (!confirm(`確定要完全刪除 ${stockName} (${stockSymbol}) 嗎？\n這將同時清除觀察清單與儀表板上的分析紀錄。`)) {
+    if (!confirm(`確定要將 ${stockName} (${stockSymbol}) 從自選股移除嗎？`)) {
       return
     }
 
     try {
-      // 1. 從 watchlist 刪除（以 id 與 symbol 雙重確保）
-      if (id && !id.startsWith('dr_')) {
-        await supabase.from('watchlist').delete().eq('id', id)
-      }
-      await supabase.from('watchlist').delete().eq('symbol', stockSymbol)
-
-      // 2. 徹底清除 daily_reports 中的歷史紀錄
-      await supabase.from('daily_reports').delete().eq('symbol', stockSymbol)
-
-      // 3. 從當前使用者持倉中移除
-      if (currentProfile && onUpdateProfileHoldings) {
-        onUpdateProfileHoldings(stockSymbol, false)
-      }
+      const { error } = await supabase.from('watchlist').delete().eq('id', id)
+      if (error) throw error
 
       setFeedback({ type: 'success', message: `已移除 ${stockName} (${stockSymbol})` })
       loadWatchlist()
       if (onUpdated) onUpdated()
     } catch (err) {
-      setFeedback({ type: 'error', message: '刪除失敗：' + err.message })
+      setFeedback({ type: 'error', message: '刪除失敗：' + (err.message || '未知錯誤') })
     }
-  }
-
-  const toggleMemberHolding = (stockSymbol) => {
-    if (!currentProfile || !onUpdateProfileHoldings) return
-    const isCurrentlyHeld = currentProfile.holdings?.includes(stockSymbol)
-    onUpdateProfileHoldings(stockSymbol, !isCurrentlyHeld)
   }
 
   if (!isOpen) return null
@@ -212,15 +171,8 @@ export default function WatchlistModal({
         {/* Modal 標題列 */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.07] flex-shrink-0">
           <div>
-            <div className="flex items-center space-x-2">
-              <h2 className="text-[17px] font-semibold text-white/95 tracking-tight">自選股</h2>
-              {currentProfile && (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-white/[0.08] text-white/60 font-medium">
-                  {currentProfile.avatar} {currentProfile.name}
-                </span>
-              )}
-            </div>
-            <p className="text-[12px] text-white/40 mt-0.5">搜尋代號或名稱加入觀察</p>
+            <h2 className="text-[17px] font-semibold text-white/95 tracking-tight">自選股</h2>
+            <p className="text-[12px] text-white/40 mt-0.5">搜尋代號或名稱加入個人觀察清單</p>
           </div>
           <button
             onClick={onClose}
@@ -292,7 +244,7 @@ export default function WatchlistModal({
             </div>
           </form>
 
-          {/* 雙向搜尋即時下拉建議選單（每檔股票即時展示價格、漲跌幅與持股資訊） */}
+          {/* 雙向搜尋即時下拉建議選單 */}
           {symbolInput.trim() && isDropdownFocused && searchResults.length > 0 && (
             <div className="absolute left-4 right-4 top-[82px] z-20 bg-[#1c1c1e]/95 backdrop-blur-xl border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden divide-y divide-white/[0.07] max-h-64 overflow-y-auto">
               <div className="px-3 py-1.5 bg-[#161618]/90 text-[10px] text-white/40 font-medium flex justify-between items-center sticky top-0 z-10 border-b border-white/[0.06]">
@@ -302,7 +254,6 @@ export default function WatchlistModal({
               {searchResults.map((item) => {
                 const isAlreadyIn = watchlist.some((w) => w.symbol === item.symbol)
                 const reportInfo = reportsMap[item.symbol]
-                const isHeld = currentProfile?.holdings?.includes(item.symbol)
                 const isUS = item.market === 'US'
                 const hasPrice = reportInfo && reportInfo.close_price != null
                 const changePct = reportInfo?.change_percent
@@ -337,7 +288,6 @@ export default function WatchlistModal({
                       </span>
                     </div>
 
-                    {/* 即時股價與持股狀態展示 */}
                     <div className="flex items-center space-x-2.5 flex-shrink-0 ml-2">
                       {hasPrice ? (
                         <div className="text-right">
@@ -354,13 +304,11 @@ export default function WatchlistModal({
                         </span>
                       )}
                       <span className={`text-[11px] font-medium px-2 py-0.5 rounded-lg border transition-all ${
-                        isHeld
-                          ? 'bg-white/[0.12] text-white/90 border-white/[0.15]'
-                          : isAlreadyIn
+                        isAlreadyIn
                           ? 'bg-white/[0.06] text-white/50 border-white/[0.08]'
                           : 'bg-white/[0.16] hover:bg-white/[0.22] text-white border-white/[0.18]'
                       }`}>
-                        {isHeld ? '持倉中' : isAlreadyIn ? '已觀察' : '+ 加入'}
+                        {isAlreadyIn ? '已加入' : '+ 加入'}
                       </span>
                     </div>
                   </button>
@@ -414,7 +362,7 @@ export default function WatchlistModal({
           </span>
         </div>
 
-        {/* 自選股清單列表（含個人持倉勾選與即時報價展示） */}
+        {/* 自選股清單列表 */}
         <div className="p-5 overflow-y-auto flex-1 space-y-2">
           {loading ? (
             <div className="py-8 text-center text-white/40 flex flex-col items-center justify-center space-y-2">
@@ -427,7 +375,6 @@ export default function WatchlistModal({
             </div>
           ) : (
             filteredWatchlist.map((item) => {
-              const isHeld = currentProfile?.holdings?.includes(item.symbol)
               const reportInfo = reportsMap[item.symbol]
               const isUS = item.market === 'US'
               const hasPrice = reportInfo && reportInfo.close_price != null
@@ -447,52 +394,21 @@ export default function WatchlistModal({
               return (
                 <div
                   key={item.id}
-                  className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all duration-150 ${
-                    isHeld
-                      ? 'bg-white/[0.07] border-white/[0.12]'
-                      : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.05]'
-                  }`}
+                  className="flex items-center justify-between p-3.5 rounded-2xl border transition-all duration-150 bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.06]"
                 >
-                  {/* 左側：勾選設為目前成員的持倉 */}
-                  <div
-                    onClick={() => toggleMemberHolding(item.symbol)}
-                    className="flex items-center space-x-3 cursor-pointer flex-1 select-none truncate mr-2"
-                  >
-                    <button
-                      type="button"
-                      className={`p-1 rounded-lg transition-colors ${
-                        isHeld ? 'text-white/90' : 'text-white/25 hover:text-white/50'
-                      }`}
-                    >
-                      {isHeld ? (
-                        <CheckSquare className="w-4 h-4 text-white/90" strokeWidth={1.75} />
-                      ) : (
-                        <Square className="w-4 h-4" strokeWidth={1.75} />
-                      )}
-                    </button>
-
-                    <div className="flex items-center space-x-2 truncate">
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-white/45 flex-shrink-0">
-                        {item.market === 'US' ? 'US' : 'TW'}
-                      </span>
-                      <div className="truncate">
-                        <div className="text-xs font-semibold text-white/90 flex items-center space-x-1.5 truncate">
-                          <span className="truncate">{item.name}</span>
-                          <span className="text-[11px] font-mono text-white/45 font-medium flex-shrink-0">
-                            {item.symbol}
-                          </span>
-                          {item.isOrphaned && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/[0.08] text-white/50 border border-white/[0.10] flex-shrink-0">
-                              歷史資料
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-white/40 flex items-center space-x-1 mt-0.5">
-                          <span>{item.market === 'US' ? '美股' : '台股'}</span>
-                          {isHeld && (
-                            <span className="text-white/60 font-medium">· 已入持倉</span>
-                          )}
-                        </div>
+                  <div className="flex items-center space-x-2.5 truncate mr-2">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-white/45 flex-shrink-0">
+                      {item.market === 'US' ? 'US' : 'TW'}
+                    </span>
+                    <div className="truncate">
+                      <div className="text-xs font-semibold text-white/90 flex items-center space-x-1.5 truncate">
+                        <span className="truncate">{item.name}</span>
+                        <span className="text-[11px] font-mono text-white/45 font-medium flex-shrink-0">
+                          {item.symbol}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-white/40 mt-0.5">
+                        <span>{item.market === 'US' ? '美股' : '台股'}</span>
                       </div>
                     </div>
                   </div>
@@ -513,7 +429,7 @@ export default function WatchlistModal({
                     <button
                       onClick={() => handleDeleteStock(item.id, item.name, item.symbol)}
                       aria-label="刪除"
-                      title="刪除"
+                      title="自自選股移除"
                       className="p-2 rounded-full text-white/30 hover:text-[#FDA4AF] hover:bg-white/[0.06] active:scale-95 transition-all duration-150"
                     >
                       <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />

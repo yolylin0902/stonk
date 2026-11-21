@@ -17,8 +17,8 @@ export const isMarketIndex = (symbol) => {
   return symbol.startsWith('^')
 }
 
-// 待分析個股的輪詢上限（每次 5 秒，最多 15 次約 75 秒），避免無休止請求消耗 Supabase 配額
-const MAX_POLL_ATTEMPTS = 15
+// 待分析個股的輪詢上限（每次 4 秒，最多 10 次約 40 秒），避免無休止請求消耗 Supabase 配額
+const MAX_POLL_ATTEMPTS = 10
 
 export default function App() {
   // 帳號與 Session 管理
@@ -46,6 +46,12 @@ export default function App() {
   availableDatesRef.current = availableDates
   const reportsRef = useRef([])
   reportsRef.current = reports
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+
+  // 自我修復（Self-Healing）節流紀錄與最新函式參照
+  const lastSelfHealRef = useRef(new Map())
+  const loadReportsRef = useRef(null)
 
   // 盤中即時報價獨立暫存狀態（純記憶體疊加，不覆蓋資料庫收盤日報）
   const [liveQuotes, setLiveQuotes] = useState({})
@@ -159,6 +165,39 @@ export default function App() {
       setNicknameInput('')
     }
   }
+
+  // 自我修復（Self-Healing）：針對卡在「AI 新聞分析整理中」之標的，在背景非同步呼叫 sync-stock 補齊分析
+  const triggerSelfHeal = useCallback((stuckStocks, targetMarket, targetDate) => {
+    const now = Date.now()
+    let delay = 0
+    for (const stock of stuckStocks) {
+      const lastHeal = lastSelfHealRef.current.get(stock.symbol) || 0
+      if (now - lastHeal > 20000) {
+        lastSelfHealRef.current.set(stock.symbol, now)
+        const currentStock = stock
+        const currentDelay = delay
+        delay += 800
+
+        setTimeout(() => {
+          supabase.functions
+            .invoke('sync-stock', {
+              body: {
+                mode: 'full',
+                symbol: currentStock.symbol,
+                name: currentStock.name,
+                market: currentStock.market || targetMarket,
+              },
+            })
+            .then(() => {
+              loadReportsRef.current?.(targetMarket, targetDate, true)
+            })
+            .catch((err) => {
+              console.warn(`自癒觸發失敗 [${currentStock.symbol}]:`, err)
+            })
+        }, currentDelay)
+      }
+    }
+  }, [])
 
   // 1. 撈取特定市場的所有有資料的日期
   const loadAvailableDates = useCallback(async (currentMarket) => {
@@ -284,7 +323,17 @@ export default function App() {
       const userStockReports = userWatchlist.map((w) => {
         const found = foundMap.get(w.symbol) || fallbackMap.get(w.symbol)
         if (found) {
-          return found
+          const isAiPending = Boolean(
+            isLatestDate &&
+            !pollTimedOutRef.current &&
+            found.headline &&
+            found.headline.includes('AI 新聞分析整理中')
+          )
+          return {
+            ...found,
+            isAiPending,
+            isPending: false,
+          }
         }
 
         // 歷史日期檢視下，缺漏資料不應標記為 isPending，亦不應觸發輪詢
@@ -301,6 +350,7 @@ export default function App() {
             story_bullets: ['此標的於該歷史交易日無收盤資料。可切換至最新日期檢視即時分析。'],
             news_links: [],
             isPending: false,
+            isAiPending: false,
           }
         }
 
@@ -327,7 +377,8 @@ export default function App() {
                 '正在抓取最新交易日價格、漲跌幅與關鍵新聞故事。'
               ],
           news_links: [],
-          isPending: !isTimedOut
+          isPending: !isTimedOut,
+          isAiPending: false,
         }
       })
 
@@ -338,6 +389,16 @@ export default function App() {
         (a, b) => Number(b.change_percent || 0) - Number(a.change_percent || 0)
       )
       const sortedUserStocks = [...pendingList, ...readyList]
+
+      // 自我修復（Self-Healing）：若有卡在「AI 新聞分析整理中」之標的，背景非同步重新觸發 sync-stock mode: 'full'
+      if (isLatestDate && sessionRef.current?.user) {
+        const stuckStocks = userStockReports.filter(
+          (r) => r.headline && r.headline.includes('AI 新聞分析整理中')
+        )
+        if (stuckStocks.length > 0) {
+          triggerSelfHeal(stuckStocks, targetMarket, targetDate)
+        }
+      }
 
       const combined = [...indexReports, ...sortedUserStocks]
       setReports((prevReports) => {
@@ -355,6 +416,7 @@ export default function App() {
             oldItem.change_percent === newItem.change_percent &&
             oldItem.headline === newItem.headline &&
             oldItem.isPending === newItem.isPending &&
+            oldItem.isAiPending === newItem.isAiPending &&
             oldItem.name === newItem.name
           if (isSame) {
             return oldItem
@@ -445,6 +507,7 @@ export default function App() {
     pollCountRef.current = 0
     pollTimedOutRef.current = false
     setPollTimedOut(false)
+    lastSelfHealRef.current.clear()
     const latestDate = await loadAvailableDates(market)
     const targetDate = selectedDate || latestDate
     await Promise.allSettled([
@@ -498,16 +561,21 @@ export default function App() {
     }
   }, [market, fetchLiveQuotes])
 
-  // 穩定的待分析個股 Key，避免 reports 物件頻繁異動造成重複觸發
+  // 同步 loadReports 參照給自癒背景任務使用
+  useEffect(() => {
+    loadReportsRef.current = loadReports
+  }, [loadReports])
+
+  // 穩定的待分析個股 Key，包含未取得報價 (isPending) 或等待 AI 新聞分析 (isAiPending)
   const pendingKey = useMemo(() => {
     return reports
-      .filter((r) => r.isPending)
+      .filter((r) => r.isPending || r.isAiPending)
       .map((r) => r.symbol)
       .sort()
       .join(',')
   }, [reports])
 
-  // 若目前畫面上有尚未分析完成的新自選股，自動背景靜默輪詢（每 5 秒檢查一次，最多 15 次約 75 秒）
+  // 若目前畫面上有尚未分析完成的新自選股，自動背景靜默輪詢（每 4 秒檢查一次，最多 10 次約 40 秒）
   useEffect(() => {
     if (!pendingKey) {
       pollCountRef.current = 0
@@ -530,7 +598,7 @@ export default function App() {
         return
       }
       loadReports(market, selectedDate, true)
-    }, 5000)
+    }, 4000)
 
     return () => clearInterval(timer)
   }, [pendingKey, market, selectedDate, loadReports])

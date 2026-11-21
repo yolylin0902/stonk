@@ -79,6 +79,7 @@ function StockCardContent({ report, onRemove, liveQuote }) {
     news_links,
     report_date,
     isPending,
+    isAiPending,
   } = report || {}
 
   // 判斷是否顯示盤中即時報價疊加層（不更動既有收盤報告，僅在盤中/最新交易時段視覺疊加）
@@ -318,9 +319,17 @@ function StockCardContent({ report, onRemove, liveQuote }) {
       {/* ── Row 2: Headline (one-sentence reason) or Intraday prompt ── */}
       {headline ? (
         <div className="mt-4">
-          {sentiment && (
-            <span className={sentimentCls}>{sentiment}</span>
-          )}
+          <div className="flex items-center space-x-2">
+            {sentiment && (
+              <span className={sentimentCls}>{sentiment}</span>
+            )}
+            {isAiPending && (
+              <span className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-white/[0.06] border border-white/[0.08] text-[11px] text-white/50 font-normal">
+                <Loader2 className="w-3 h-3 text-white/40 animate-spin" strokeWidth={1.75} />
+                <span>AI 新聞摘要中</span>
+              </span>
+            )}
+          </div>
           <p className="text-[15px] font-medium text-white/95 leading-snug tracking-tight mt-2">
             {headline}
           </p>

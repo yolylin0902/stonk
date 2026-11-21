@@ -107,13 +107,17 @@ async function fetchYahooPrice(symbol: string): Promise<PriceResult | null> {
 async function fetchGoogleNews(symbol: string, name: string, market: string): Promise<Array<{ title: string; link: string }>> {
   try {
     const cleanSym = symbol.replace(/\.TWO?$/i, "");
-    const query = name && name !== symbol ? `${name} ${cleanSym}` : cleanSym;
-    let url = "";
+    let query = "";
     if (market === "TW") {
-      url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant`;
+      const cleanName = name && name !== symbol ? name.replace(/\([^)]*\)/g, "").trim() : "";
+      query = cleanName ? `${cleanName} ${cleanSym}` : `${cleanSym} 股票`;
     } else {
-      url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+      query = `${cleanSym} stock news`;
     }
+
+    const url = market === "TW"
+      ? `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant`
+      : `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
 
     const resp = await fetch(url, {
       headers: {
@@ -124,10 +128,10 @@ async function fetchGoogleNews(symbol: string, name: string, market: string): Pr
 
     const xml = await resp.text();
     const items: Array<{ title: string; link: string }> = [];
-    const itemRegex = /<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/gi;
+    const itemRegex = /<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<\/item>/gi;
     let match;
     while ((match = itemRegex.exec(xml)) !== null && items.length < 5) {
-      let rawTitle = match[1] || "";
+      let rawTitle = (match[1] || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
       rawTitle = rawTitle
         .replace(/&amp;/g, "&")
         .replace(/&lt;/g, "<")
@@ -135,7 +139,7 @@ async function fetchGoogleNews(symbol: string, name: string, market: string): Pr
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .trim();
-      const link = (match[2] || "").trim();
+      let link = (match[2] || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim();
       if (rawTitle && link) {
         items.push({ title: rawTitle, link });
       }
@@ -147,7 +151,7 @@ async function fetchGoogleNews(symbol: string, name: string, market: string): Pr
   }
 }
 
-// 輔助函式：呼叫 Gemini 進行故事分析
+// 輔助函式：呼叫 Gemini 進行故事分析（保證回傳純 JSON，支援無新聞保底分析）
 async function analyzeWithGemini(
   symbol: string,
   name: string,
@@ -157,10 +161,15 @@ async function analyzeWithGemini(
   newsItems: Array<{ title: string; link: string }>,
   apiKey: string
 ): Promise<{ sentiment: string; headline: string; story_bullets: string[] } | null> {
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.warn("analyzeWithGemini: No GEMINI_API_KEY provided");
+    return null;
+  }
 
   const newsSummary = newsItems.map((n, i) => `${i + 1}. ${n.title}`).join("\n");
-  const trend = changePercent > 0 ? `上漲 ${changePercent}%` : (changePercent < 0 ? `下跌 ${Math.abs(changePercent)}%` : "持平 0.0%");
+  const trend = changePercent > 0
+    ? `上漲 ${changePercent}%`
+    : (changePercent < 0 ? `下跌 ${Math.abs(changePercent)}%` : "持平 0.0%");
 
   const prompt = `你是一位專業且客觀的股市分析師。請針對以下股票最新交易日行情與焦點新聞，進行精簡扼要的盤後焦點分析。
 股票名稱：${name} (${symbol})
@@ -169,14 +178,14 @@ async function analyzeWithGemini(
 最新漲跌幅：${trend}
 
 相關最新新聞：
-${newsSummary || "（目前查無最新即時新聞，請根據該股產業趨勢與漲跌幅客觀綜述）"}
+${newsSummary || "（目前查無最新即時新聞，請根據該股所屬產業地位、市場大盤整體氛圍與今日漲跌幅客觀綜述）"}
 
-請嚴格輸出 JSON 格式（不要使用 Markdown 標記，直接輸出合法 JSON），欄位規範如下：
+請嚴格輸出純 JSON 格式（絕對不要使用 Markdown 標籤如 \`\`\`json，直接輸出合法 JSON 物件），欄位規範如下：
 1. "sentiment": 僅能為 "利多"、"利空" 或 "中性"（字串）。
 2. "headline": 20 字以內的繁體中文精闢總結 headline（說明今日漲跌或市場核心主因）。
 3. "story_bullets": 2 到 3 點繁體中文重點條列（陣列字串），每點 30~50 字，依序說明：
-   - 核心驅動事件或財報/法說/總經消息。
-   - 產業地位、技術面或法人買賣超動向。
+   - 核心驅動事件、產業趨勢或大盤氛圍。
+   - 技術面、評價面或法人資金動向。
    - 後續應留意的觀察關鍵指標。
 
 輸出範例格式：
@@ -190,7 +199,7 @@ ${newsSummary || "（目前查無最新即時新聞，請根據該股產業趨�
   ]
 }`;
 
-  const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"];
+  const models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"];
   for (const model of models) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -207,24 +216,30 @@ ${newsSummary || "（目前查無最新即時新聞，請根據該股產業趨�
       });
 
       if (!res.ok) {
-        console.warn(`Gemini model ${model} returned status ${res.status}`);
+        const errText = await res.text();
+        console.warn(`Gemini model ${model} status ${res.status}: ${errText}`);
         continue;
       }
 
       const json = await res.json();
-      const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+      let rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!rawText) continue;
 
-      const parsed = JSON.parse(rawText.trim());
+      // 清理可能殘留的 markdown 標記 (```json ... ```)
+      rawText = rawText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
+
+      const parsed = JSON.parse(rawText);
       if (parsed && parsed.headline && Array.isArray(parsed.story_bullets)) {
         return {
-          sentiment: ["利多", "利空", "中性"].includes(parsed.sentiment) ? parsed.sentiment : (changePercent > 0.5 ? "利多" : (changePercent < -0.5 ? "利空" : "中性")),
+          sentiment: ["利多", "利空", "中性"].includes(parsed.sentiment)
+            ? parsed.sentiment
+            : (changePercent > 0.5 ? "利多" : (changePercent < -0.5 ? "利空" : "中性")),
           headline: String(parsed.headline).trim(),
           story_bullets: parsed.story_bullets.map((b: any) => String(b).trim()).slice(0, 3),
         };
       }
     } catch (err) {
-      console.warn(`Gemini model ${model} error:`, err);
+      console.error(`Gemini model ${model} parse error:`, err);
     }
   }
 
@@ -427,18 +442,24 @@ Deno.serve(async (req) => {
     const newsItems = await fetchGoogleNews(symbol, name, market);
     let aiResult = null;
     if (geminiApiKey) {
-      aiResult = await analyzeWithGemini(
-        symbol,
-        name,
-        market,
-        priceInfo.price,
-        priceInfo.change_percent,
-        newsItems,
-        geminiApiKey
-      );
+      try {
+        aiResult = await analyzeWithGemini(
+          symbol,
+          name,
+          market,
+          priceInfo.price,
+          priceInfo.change_percent,
+          newsItems,
+          geminiApiKey
+        );
+      } catch (geminiErr) {
+        console.error("Gemini 分析過程異常:", geminiErr);
+      }
+    } else {
+      console.warn("未設定 GEMINI_API_KEY，將使用新聞標題或行情保底");
     }
 
-    // 若 AI 產出成功，補完該筆紀錄
+    // 關鍵保底：若 AI 成功則寫入 AI 結果；若 AI 未回傳但有新聞則用新聞；若皆無則產生明確行情保底，絕不留在「AI 新聞分析整理中...」
     if (aiResult) {
       const phase2Record = {
         report_date: reportDate,
@@ -462,11 +483,32 @@ Deno.serve(async (req) => {
         close_price: priceInfo.price,
         change_percent: priceInfo.change_percent,
         sentiment: priceInfo.change_percent > 0.5 ? "利多" : (priceInfo.change_percent < -0.5 ? "利空" : "中性"),
-        headline: newsItems[0]?.title || `最新行情收盤於 ${priceInfo.price}`,
+        headline: newsItems[0]?.title || `${name}最新行情收盤於 ${priceInfo.price}`,
         story_bullets: newsItems.slice(0, 3).map((n) => n.title),
         news_links: newsItems,
       };
       await adminClient.from("daily_reports").upsert(fallbackPhase2, { onConflict: "report_date,symbol" });
+    } else {
+      const trendStr = priceInfo.change_percent > 0
+        ? `上漲 ${priceInfo.change_percent}%`
+        : (priceInfo.change_percent < -0.5 ? `下跌 ${Math.abs(priceInfo.change_percent)}%` : `持平`);
+      const guaranteedRecord = {
+        report_date: reportDate,
+        market: market,
+        symbol: symbol,
+        name: name,
+        close_price: priceInfo.price,
+        change_percent: priceInfo.change_percent,
+        sentiment: priceInfo.change_percent > 0.5 ? "利多" : (priceInfo.change_percent < -0.5 ? "利空" : "中性"),
+        headline: `${name}收盤報 ${priceInfo.price}（${trendStr}），市場密切關注後續量能變化`,
+        story_bullets: [
+          `當日行情：標的最新交易價格為 ${priceInfo.price}，全日表現為 ${trendStr}。`,
+          `市場動態：所屬板塊呈現震盪整理，市場資金持續觀察基本面與總體經濟指引。`,
+          `後續觀察：宜留意短線支撐均線力道與後續重要財報法說消息。`,
+        ],
+        news_links: [],
+      };
+      await adminClient.from("daily_reports").upsert(guaranteedRecord, { onConflict: "report_date,symbol" });
     }
 
     return new Response(

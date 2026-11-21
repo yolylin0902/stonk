@@ -160,7 +160,7 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
   }
 
   return (
-    <div className="w-full">
+    <motion.div layout="position" transition={IOS_SPRING.smooth} className="w-full">
       <AnimatePresence mode="wait">
         {!isExpanded ? (
           <motion.button
@@ -172,7 +172,7 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
             transition={{ duration: 0.12 }}
             whileTap={CARD_TAP}
             onClick={handleExpand}
-            className="w-full ios-glass rounded-[28px] p-4 border border-dashed border-white/[0.14] hover:border-white/[0.25] hover:bg-white/[0.05] cursor-pointer flex items-center justify-center space-x-2.5 text-white/50 hover:text-white/85 group select-none"
+            className="w-full ios-glass rounded-[28px] p-5 border border-dashed border-white/[0.14] hover:border-white/[0.25] hover:bg-white/[0.05] cursor-pointer flex items-center justify-center space-x-2.5 text-white/50 hover:text-white/85 group select-none"
           >
             <span className="w-7 h-7 rounded-full bg-white/[0.08] group-hover:bg-white/[0.14] flex items-center justify-center transition-colors">
               <Plus className="w-4 h-4 text-white/70 group-hover:text-white" strokeWidth={2} />
@@ -317,7 +317,7 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   )
 }
 

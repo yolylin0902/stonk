@@ -780,7 +780,7 @@ export default function App() {
                       </motion.section>
                     )}
 
-                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（AddStockCard 置頂物理隔離，popLayout 平滑補位） */}
+                    {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示 */}
                     {cardViewMode === 'STOCKS' && (
                       <motion.section
                         key="stocks-section"
@@ -798,13 +798,6 @@ export default function App() {
                           </span>
                         </div>
 
-                        {/* 關鍵佈局：AddStockCard 固定置於最頂端，輸入位置永遠穩定且不隨下方卡片變動位移 */}
-                        <AddStockCard
-                          market={market}
-                          onAddStock={handleAddStock}
-                          existingSymbols={existingSymbols}
-                        />
-
                         {/* 個人個股圖卡列表與流暢補位 */}
                         <div className="space-y-3">
                           <AnimatePresence mode="popLayout" initial={false}>
@@ -816,6 +809,13 @@ export default function App() {
                               />
                             ))}
                           </AnimatePresence>
+
+                          {/* 圖卡「一加（+）」：列表最末端原地展開的半透明霧面玻璃新增圖卡 */}
+                          <AddStockCard
+                            market={market}
+                            onAddStock={handleAddStock}
+                            existingSymbols={existingSymbols}
+                          />
                         </div>
                       </motion.section>
                     )}

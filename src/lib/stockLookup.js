@@ -1,7 +1,4 @@
-import stockData from './stockDirectory.json'
-import twStocksData from '../data/twStocks.json'
-
-// 常見台美股別名與中英文快捷對照表（保證最頂級熱門股第一時間秒中）
+// 常見台美股別名與中英文快捷對照表（保證最頂級熱門股第一時間秒中，無需等待大字典下載）
 const COMMON_ALIASES = {
   'GOOGLE': { symbol: 'GOOGL', name: 'Alphabet (Google)', market: 'US' },
   'GOOG': { symbol: 'GOOGL', name: 'Alphabet (Google)', market: 'US' },
@@ -38,6 +35,8 @@ const COMMON_ALIASES = {
   '台積電': { symbol: '2330.TW', name: '台積電', market: 'TW' },
   '台積': { symbol: '2330.TW', name: '台積電', market: 'TW' },
   '2330': { symbol: '2330.TW', name: '台積電', market: 'TW' },
+  '台達電': { symbol: '2308.TW', name: '台達電', market: 'TW' },
+  '2308': { symbol: '2308.TW', name: '台達電', market: 'TW' },
   '元太': { symbol: '8069.TWO', name: '元太', market: 'TW' },
   '8069': { symbol: '8069.TWO', name: '元太', market: 'TW' },
   '群聯': { symbol: '8299.TWO', name: '群聯', market: 'TW' },
@@ -68,6 +67,32 @@ const COMMON_ALIASES = {
   '台灣50': { symbol: '0050.TW', name: '元大台灣50', market: 'TW' },
 }
 
+// 動態載入的大型字典快取（首頁不靜態載入，大幅縮減首屏 bundle 體積）
+let twStocksData = null
+let stockData = null
+let loadPromise = null
+
+/**
+ * 預先或隨選非同步載入台美股大字典
+ * @returns {Promise<{ twStocksData: object, stockData: object }>}
+ */
+export function ensureStockData() {
+  if (twStocksData && stockData) {
+    return Promise.resolve({ twStocksData, stockData })
+  }
+  if (!loadPromise) {
+    loadPromise = Promise.all([
+      import('../data/twStocks.json').then((m) => {
+        twStocksData = m.default || m
+      }),
+      import('./stockDirectory.json').then((m) => {
+        stockData = m.default || m
+      }),
+    ]).then(() => ({ twStocksData, stockData }))
+  }
+  return loadPromise
+}
+
 /**
  * 雙向股票搜尋（代號 ⇄ 中英文關鍵字）
  * 完整涵蓋全台灣上市 (TWSE) 與上櫃 (TPEX) 2,800+ 檔標的，及美股核心標的
@@ -93,7 +118,7 @@ export function searchStocksTwoWay(rawQuery, limit = 8) {
     list.push(item)
   }
 
-  // 1. 檢查常用別名（最優先命中）
+  // 1. 檢查常用別名（最優先命中，同步即時回傳）
   if (COMMON_ALIASES[upperQ]) {
     addResult(exactMatches, COMMON_ALIASES[upperQ])
   }
@@ -103,6 +128,11 @@ export function searchStocksTwoWay(rawQuery, limit = 8) {
     } else if (aliasKey.toLowerCase().startsWith(q)) {
       addResult(startMatches, aliasVal)
     }
+  }
+
+  // 若背景大字典尚未載入，背景觸發載入
+  if (!twStocksData || !stockData) {
+    ensureStockData()
   }
 
   // 2. 搜尋全台股清單（官方 2,800+ 檔上市 .TW 與上櫃 .TWO 精確匹配）

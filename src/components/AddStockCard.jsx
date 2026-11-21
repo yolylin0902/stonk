@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useRef, memo } from 'react'
+import React, { useState, useMemo, useRef, useEffect, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, X, Loader2, Check, AlertCircle } from 'lucide-react'
-import { autoLookupStock, searchStocksTwoWay } from '../lib/stockLookup'
+import { autoLookupStock, searchStocksTwoWay, ensureStockData } from '../lib/stockLookup'
 import { IOS_SPRING, TACTILE_TAP, CARD_TAP } from '../motion/iosMotion'
 
 function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
@@ -10,7 +10,17 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
   const [nameVal, setNameVal] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
+  const [dictReady, setDictReady] = useState(false)
   const inputRef = useRef(null)
+
+  // 展開新增卡片時，非同步預載台美股大字典
+  useEffect(() => {
+    if (isExpanded) {
+      ensureStockData().then(() => {
+        setDictReady(true)
+      })
+    }
+  }, [isExpanded])
 
   const isTW = market === 'TW'
 
@@ -35,14 +45,14 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
   const suggestions = useMemo(() => {
     if (!inputVal.trim() || inputVal.trim().length < 1) return []
     return searchStocksTwoWay(inputVal.trim(), 4)
-  }, [inputVal])
+  }, [inputVal, dictReady])
 
   // 最優單筆辨識資訊
   const detectedInfo = useMemo(() => {
     if (!inputVal.trim()) return null
     if (suggestions.length > 0) return suggestions[0]
     return autoLookupStock(normalizedSymbol)
-  }, [inputVal, suggestions, normalizedSymbol])
+  }, [inputVal, suggestions, normalizedSymbol, dictReady])
 
   const handleExpand = () => {
     setIsExpanded(true)

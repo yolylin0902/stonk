@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   MapPin,
   Navigation,
   ChevronDown,
-  ChevronUp,
   Search,
   X,
   Loader2,
@@ -413,47 +413,42 @@ export default function ParkSleepSection() {
   const nearest = displayList[0]
 
   return (
-    <div className="rounded-[28px] ios-glass p-4 text-white transition-all shadow-sm">
-      {/* 標題列 */}
-      <div
+    <div className="w-full rounded-[18px] bg-white/[0.035] border border-white/[0.08] backdrop-blur-xl overflow-hidden transition-colors">
+      {/* 頂部極簡可點擊單行細條 */}
+      <button
+        type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex cursor-pointer items-center justify-between select-none"
+        aria-expanded={isExpanded}
+        className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left transition-colors active:bg-white/[0.05]"
       >
-        <div className="flex items-center space-x-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.08] text-white/70">
-            <MapPin className="h-4 w-4" strokeWidth={1.75} />
-          </div>
-          <div>
-            <div className="flex items-center space-x-1.5">
-              <span className="text-[13px] font-semibold text-white/90">
-                周邊休閒公園
-              </span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/45 font-medium">
-                鄰里分析
-              </span>
-            </div>
-            <p className="text-[11px] text-white/40">
-              {userLocation && nearest?.distance
-                ? `最近步行點：${nearest.name} (約 ${nearest.walkMinutes} 分鐘 · ${formatDistance(
-                    nearest.distance
-                  )})`
-                : '點擊展開查看鄰里公園與步程'}
-            </p>
-          </div>
+        <div className="flex items-center gap-2 min-w-0">
+          <MapPin className="w-3.5 h-3.5 text-white/45 shrink-0" strokeWidth={1.75} />
+          <span className="text-[13px] font-medium text-white/80 truncate">
+            周邊休閒公園
+          </span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/[0.06] text-white/45 shrink-0">
+            鄰里分析
+          </span>
         </div>
 
-        <button className="text-white/40 hover:text-white/70 p-1 rounded-full transition-colors">
-          {isExpanded ? (
-            <ChevronUp className="h-4 w-4" strokeWidth={1.75} />
-          ) : (
-            <ChevronDown className="h-4 w-4" strokeWidth={1.75} />
-          )}
-        </button>
-      </div>
+        <ChevronDown
+          className="w-3.5 h-3.5 text-white/35 transition-transform duration-200 shrink-0"
+          style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+        />
+      </button>
 
-      {/* 展開後的內容 */}
-      {isExpanded && (
-        <div className="mt-3.5 space-y-3 pt-3.5 border-t border-white/[0.07] ios-fade-in">
+      {/* 平滑手風琴展開區 */}
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            key="park-accordion-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-3.5 pb-3.5 pt-2.5 border-t border-white/[0.06] space-y-3">
           {/* 核心主打操作：一鍵自動分析周邊步行公園 */}
           <div className="space-y-2">
             <button
@@ -658,9 +653,11 @@ export default function ParkSleepSection() {
                 </div>
               ))
             )}
+            </div>
           </div>
-        </div>
+        </motion.div>
       )}
-    </div>
-  )
+    </AnimatePresence>
+  </div>
+)
 }

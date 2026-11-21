@@ -513,18 +513,17 @@ JSON 格式範例：
 
 
 # ----------------------------------------------------------------------
-# 核心大盤指數與基準標的（確保排程每日必爬，不依賴個人自選股清單是否有追蹤）
+# 核心大盤純指數（確保排程每日必爬純大盤指數，不包含任何 ETF）
 # ----------------------------------------------------------------------
 DEFAULT_MARKET_INDEXES: Dict[str, List[Dict[str, Any]]] = {
     "US": [
         {"symbol": "^GSPC", "name": "標普 500 指數", "market": "US"},
         {"symbol": "^IXIC", "name": "那斯達克綜合指數", "market": "US"},
         {"symbol": "^DJI", "name": "道瓊工業指數", "market": "US"},
-        {"symbol": "SOXX", "name": "費城半導體 ETF", "market": "US"},
+        {"symbol": "^SOX", "name": "費城半導體指數", "market": "US"},
     ],
     "TW": [
         {"symbol": "^TWII", "name": "台灣加權指數", "market": "TW"},
-        {"symbol": "0050.TW", "name": "元大台灣50", "market": "TW"},
     ],
 }
 

@@ -130,6 +130,15 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
       return
     }
 
+    // 防呆：阻擋輸入 ^ 開頭的大盤指數代號
+    if (targetSymbol.startsWith('^') || raw.startsWith('^')) {
+      setFeedback({
+        type: 'error',
+        message: '大盤指數已固定於指數區，無需手動新增',
+      })
+      return
+    }
+
     if (existingSymbols.includes(targetSymbol)) {
       setFeedback({ type: 'error', message: `${targetSymbol} 已在自選股清單中` })
       return

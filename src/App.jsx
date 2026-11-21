@@ -10,15 +10,11 @@ import { supabase } from './lib/supabase'
 import { Loader2, BarChart3, Layers } from 'lucide-react'
 import { IOS_SPRING, TACTILE_TAP } from './motion/iosMotion'
 
-// 判斷是否為市場指數或核心 ETF (放在指數區)
+// 判斷是否為真正的官方純大盤指數（嚴格只認 ^ 開頭，例如美股 ^GSPC, ^IXIC, ^DJI, ^SOX；台股 ^TWII）
+// 所有 ETF（例如 QQQ, SOXX, SPY, 0050.TW 等）皆歸類在一般自選個股區，不列入指數區
 export const isMarketIndex = (symbol) => {
   if (!symbol) return false
-  if (symbol.startsWith('^')) return true
-  // 台股市場大盤與核心領域 ETF
-  if (['0050.TW', '0056.TW', '00878.TW', '0052.TW', '00919.TW', '00929.TW'].includes(symbol)) return true
-  // 美股主要指數型 ETF
-  if (['SPY', 'QQQ', 'DIA', 'IWM', 'SOXX'].includes(symbol)) return true
-  return false
+  return symbol.startsWith('^')
 }
 
 // 待分析個股的輪詢上限（每次 5 秒，最多 15 次約 75 秒），避免無休止請求消耗 Supabase 配額
@@ -189,15 +185,28 @@ export default function App() {
       // 取得個人自選股表 (RLS 會自動依 user_id 篩選該登入者的標的)
       const { data: watchData } = await supabase.from('watchlist').select('*')
 
-      // ── A. 大盤指數獨立處理：只要符合指數標準即呈現，不依賴個人 watchlist 是否有追蹤 ──
-      const indexReports = (allData || []).filter(
+      // ── A. 大盤指數獨立處理：僅呈現純大盤指數（嚴格限定 ^ 開頭），並依 symbol 去重 ──
+      const rawIndexReports = (allData || []).filter(
         (r) => r.market === targetMarket && isMarketIndex(r.symbol)
       )
+      const indexMap = new Map()
+      for (const ir of rawIndexReports) {
+        if (!indexMap.has(ir.symbol)) {
+          indexMap.set(ir.symbol, ir)
+        }
+      }
+      const indexReports = Array.from(indexMap.values())
 
-      // ── B. 個人持股嚴格比對：只呈現該使用者 watchlist 中有追蹤的個股 ──
-      const userWatchlist = (watchData || []).filter(
-        (w) => w.market === targetMarket
-      )
+      // ── B. 個人自選持股嚴格比對：只呈現使用者 watchlist 中的個股或 ETF（嚴格過濾排除 ^ 開頭大盤指數），並去重 ──
+      const userWatchlistMap = new Map()
+      for (const w of watchData || []) {
+        if (w.market === targetMarket && !isMarketIndex(w.symbol)) {
+          if (!userWatchlistMap.has(w.symbol)) {
+            userWatchlistMap.set(w.symbol, w)
+          }
+        }
+      }
+      const userWatchlist = Array.from(userWatchlistMap.values())
 
       const foundMap = new Map()
       for (const r of allData || []) {
@@ -483,13 +492,25 @@ export default function App() {
     return () => clearInterval(timer)
   }, [pendingKey, market, selectedDate, loadReports])
 
-  // 分離出「指數區」與「自選個股區」
+  // 分離出「純指數區」與「自選個股/ETF 區」，並依 symbol 嚴格去重
   const indexReports = useMemo(() => {
-    return reports.filter((r) => isMarketIndex(r.symbol))
+    const map = new Map()
+    for (const r of reports) {
+      if (isMarketIndex(r.symbol) && !map.has(r.symbol)) {
+        map.set(r.symbol, r)
+      }
+    }
+    return Array.from(map.values())
   }, [reports])
 
   const userStockReports = useMemo(() => {
-    return reports.filter((r) => !isMarketIndex(r.symbol))
+    const map = new Map()
+    for (const r of reports) {
+      if (!isMarketIndex(r.symbol) && !map.has(r.symbol)) {
+        map.set(r.symbol, r)
+      }
+    }
+    return Array.from(map.values())
   }, [reports])
 
   // 自選股 symbol 清單，使用 useMemo 保持引用穩定

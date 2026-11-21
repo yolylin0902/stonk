@@ -1,3 +1,5 @@
+import { loadTwStockList, getTwStockNameSync } from './twStockMap'
+
 // 常見台美股別名與中英文快捷對照表（保證最頂級熱門股第一時間秒中，無需等待大字典下載）
 const COMMON_ALIASES = {
   'GOOGLE': { symbol: 'GOOGL', name: 'Alphabet (Google)', market: 'US' },
@@ -159,8 +161,8 @@ export function ensureStockData() {
   }
   if (!loadPromise) {
     loadPromise = Promise.all([
-      import('../data/twStocks.json').then((m) => {
-        twStocksData = m.default || m
+      loadTwStockList().then((list) => {
+        twStocksData = list
       }),
       import('./stockDirectory.json').then((m) => {
         stockData = m.default || m
@@ -213,8 +215,9 @@ export function searchStocksTwoWay(rawQuery, limit = 8) {
   }
 
   // 2. 搜尋全台股清單（官方 2,800+ 檔上市 .TW 與上櫃 .TWO 精確匹配）
-  if (twStocksData && typeof twStocksData === 'object') {
-    for (const item of Object.values(twStocksData)) {
+  if (twStocksData) {
+    const list = Array.isArray(twStocksData) ? twStocksData : Object.values(twStocksData)
+    for (const item of list) {
       const code = item.code || ''
       const name = item.name || ''
       const sym = item.symbol || ''
@@ -279,9 +282,10 @@ export function autoLookupStock(rawInput) {
   // 2. 判斷是否為台股格式 (純數字 4~6 碼，或帶有 .TW / .TWO)
   if (/^\d{4,6}(\.TW|\.TWO)?$/.test(clean)) {
     const baseCode = clean.replace(/\.TW|\.TWO/g, '')
+    const syncName = getTwStockNameSync(clean) || getTwStockNameSync(baseCode)
     return {
       symbol: clean.includes('.') ? clean : clean + '.TW',
-      name: `台股 ${baseCode}`,
+      name: syncName || clean,
       market: 'TW'
     }
   }

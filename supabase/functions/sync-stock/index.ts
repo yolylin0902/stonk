@@ -417,6 +417,34 @@ Deno.serve(async (req) => {
       }
     }
 
+    const isPlaceholder = (n?: string, sym?: string) => {
+      if (!n || typeof n !== "string") return true;
+      const t = n.trim();
+      if (!t) return true;
+      if (sym) {
+        const cleanSym = sym.trim().toUpperCase();
+        const baseCode = cleanSym.replace(/\.(TW|TWO)$/i, "");
+        if (t.toUpperCase() === cleanSym || t.toUpperCase() === baseCode) return true;
+      }
+      if (/^台股\s*[A-Z0-9.\-]+$/i.test(t)) return true;
+      if (/^美股\s*[A-Z0-9.\-]+$/i.test(t)) return true;
+      return false;
+    };
+
+    // 防呆：避免以「台股 XXXX」等佔位字覆蓋既有 daily_reports 中的正確公司名稱
+    try {
+      const { data: existingReport } = await adminClient
+        .from("daily_reports")
+        .select("name")
+        .eq("report_date", reportDate)
+        .eq("symbol", symbol)
+        .maybeSingle();
+
+      if (existingReport?.name && !isPlaceholder(existingReport.name, symbol) && isPlaceholder(name, symbol)) {
+        name = existingReport.name;
+      }
+    } catch (_) {}
+
     // 若查無報價，寫入防呆紀錄並回傳 not_found
     if (!priceInfo) {
       const fallbackRecord = {
@@ -442,8 +470,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 若有 shortName 且原 name === symbol，更新名稱
-    if (priceInfo.shortName && (name === symbol || !name)) {
+    // 若有 shortName 且原名稱為佔位字或等於代號，更新名稱
+    if (priceInfo.shortName && isPlaceholder(name, symbol)) {
       name = priceInfo.shortName;
       try {
         await adminClient.from("watchlist").update({ name }).eq("symbol", symbol);
@@ -468,8 +496,9 @@ Deno.serve(async (req) => {
     };
     await adminClient.from("daily_reports").upsert(phase1Record, { onConflict: "report_date,symbol" });
 
-    // 6. 第二階段：抓取 Google News RSS 與呼叫 Gemini 生成故事
-    const newsItems = await fetchGoogleNews(symbol, name, market);
+    // 6. 第二階段：抓取 Google News RSS 與呼叫 Gemini 生成故事（若名稱為佔位字則以乾淨代號搜尋）
+    const newsQueryName = isPlaceholder(name, symbol) ? "" : name;
+    const newsItems = await fetchGoogleNews(symbol, newsQueryName, market);
     let aiResult = null;
     if (geminiApiKey) {
       try {

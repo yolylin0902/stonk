@@ -7,6 +7,7 @@ import StockCard from './components/StockCard'
 import AddStockCard from './components/AddStockCard'
 import { supabase } from './lib/supabase'
 import { autoLookupStock } from './lib/stockLookup'
+import { loadTwStockMap, resolveDisplayName } from './lib/twStockMap'
 import { Loader2, BarChart3, Layers } from 'lucide-react'
 import { IOS_SPRING, TACTILE_TAP } from './motion/iosMotion'
 
@@ -206,10 +207,11 @@ export default function App() {
         const currentDelay = delay
         delay += 800
 
-        const bestStock = autoLookupStock(currentStock.symbol)
-        const effectiveName = (bestStock?.name && bestStock.name !== currentStock.symbol)
-          ? bestStock.name
-          : currentStock.name
+        const effectiveName = resolveDisplayName(
+          currentStock.symbol,
+          currentStock.market || targetMarket,
+          [currentStock.name]
+        )
 
         setTimeout(() => {
           supabase.functions
@@ -279,24 +281,30 @@ export default function App() {
       }
       setErrorMsg('')
 
-      // 撈取指定日期的全部報告 (包含指數與各股票)
+      // 撈取指定日期的全部報告 (包含指數與各股票)，若為台股市場並行預載台股字典
       let allQuery = supabase.from('daily_reports').select('*')
       if (targetDate) {
         allQuery = allQuery.eq('report_date', targetDate)
       }
-      const { data: allData } = await allQuery
 
-      // 取得個人自選股表 (RLS 會自動依 user_id 篩選該登入者的標的)
-      const { data: watchData } = await supabase.from('watchlist').select('*')
+      const [allRes, watchRes, twMap] = await Promise.all([
+        allQuery,
+        supabase.from('watchlist').select('*'),
+        targetMarket === 'TW' ? loadTwStockMap() : Promise.resolve(null),
+      ])
+
+      const allData = allRes?.data || []
+      const watchData = watchRes?.data || []
 
       // ── A. 大盤指數獨立處理：僅呈現純大盤指數（嚴格限定 ^ 開頭），並依 symbol 去重 ──
-      const rawIndexReports = (allData || []).filter(
+      const rawIndexReports = allData.filter(
         (r) => r.market === targetMarket && isMarketIndex(r.symbol)
       )
       const indexMap = new Map()
       for (const ir of rawIndexReports) {
         if (!indexMap.has(ir.symbol)) {
-          indexMap.set(ir.symbol, ir)
+          const resolvedName = resolveDisplayName(ir.symbol, targetMarket, [ir.name], twMap)
+          indexMap.set(ir.symbol, { ...ir, name: resolvedName })
         }
       }
       const indexReports = Array.from(indexMap.values())
@@ -361,10 +369,12 @@ export default function App() {
             !pollTimedOutRef.current &&
             needsAiAnalysis(found.headline)
           )
-          const bestStock = autoLookupStock(w.symbol)
-          const resolvedName = (bestStock?.name && bestStock.name !== w.symbol)
-            ? bestStock.name
-            : (found.name && found.name !== w.symbol ? found.name : (w.name || w.symbol))
+          const resolvedName = resolveDisplayName(
+            w.symbol,
+            targetMarket,
+            [found.name, w.name],
+            twMap
+          )
           return {
             ...found,
             name: resolvedName,
@@ -375,10 +385,16 @@ export default function App() {
 
         // 歷史日期檢視下，缺漏資料不應標記為 isPending，亦不應觸發輪詢
         if (!isLatestDate) {
+          const resolvedName = resolveDisplayName(
+            w.symbol,
+            targetMarket,
+            [w.name],
+            twMap
+          )
           return {
             id: 'history_missing_' + w.symbol,
             symbol: w.symbol,
-            name: w.name,
+            name: resolvedName,
             market: w.market,
             close_price: null,
             change_percent: null,
@@ -393,10 +409,16 @@ export default function App() {
 
         // 最新日期下剛加入但尚未有 daily_reports 的新標的
         const isTimedOut = pollTimedOutRef.current
+        const resolvedName = resolveDisplayName(
+          w.symbol,
+          targetMarket,
+          [w.name],
+          twMap
+        )
         return {
           id: 'pending_' + w.symbol,
           symbol: w.symbol,
-          name: w.name,
+          name: resolvedName,
           market: w.market,
           close_price: null,
           change_percent: null,
@@ -678,7 +700,12 @@ export default function App() {
         return false
       }
       try {
-        const finalName = (name || cleanSym).trim()
+        let finalName = (name || cleanSym).trim()
+        if (stockMarket === 'TW') {
+          const twMap = await loadTwStockMap()
+          const resolved = resolveDisplayName(cleanSym, 'TW', [finalName], twMap)
+          if (resolved) finalName = resolved
+        }
         const { error } = await supabase.from('watchlist').insert([
           {
             user_id: session.user.id,

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, memo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, X, Loader2, Check, AlertCircle } from 'lucide-react'
 import { autoLookupStock, searchStocksTwoWay, ensureStockData } from '../lib/stockLookup'
+import { loadTwStockMap, isPlaceholderName } from '../lib/twStockMap'
 import { IOS_SPRING, TACTILE_TAP, CARD_TAP } from '../motion/iosMotion'
 
 function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
@@ -120,12 +121,24 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
       return
     }
 
-    // 7. 補齊公司名稱
-    if (!name) {
-      if (detectedInfo?.name && (detectedInfo.symbol === cleanUpper || detectedInfo.symbol === sym)) {
-        name = detectedInfo.name
+    // 7. 補齊公司名稱：嚴格防呆，禁止「台股 XXXX」等佔位字寫入
+    if (!name || isPlaceholderName(name, cleanUpper)) {
+      if (isTW) {
+        const twMap = await loadTwStockMap()
+        const fromMap = twMap.get(cleanUpper) || twMap.get(cleanUpper.replace(/\.(TW|TWO)$/i, ''))
+        if (fromMap && !isPlaceholderName(fromMap, cleanUpper)) {
+          name = fromMap
+        } else if (detectedInfo?.name && !isPlaceholderName(detectedInfo.name, cleanUpper)) {
+          name = detectedInfo.name
+        } else {
+          name = cleanUpper
+        }
       } else {
-        name = cleanUpper
+        if (detectedInfo?.name && !isPlaceholderName(detectedInfo.name, cleanUpper)) {
+          name = detectedInfo.name
+        } else {
+          name = cleanUpper
+        }
       }
     }
 
@@ -189,6 +202,13 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
           if (!targetName) targetName = found.name
         } else {
           targetSymbol = `${clean}.TW`
+        }
+        if (!targetName) {
+          const twMap = await loadTwStockMap()
+          const fromMap = twMap.get(targetSymbol) || twMap.get(clean)
+          if (fromMap && !isPlaceholderName(fromMap, targetSymbol)) {
+            targetName = fromMap
+          }
         }
       } else {
         targetSymbol = clean

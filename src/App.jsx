@@ -447,6 +447,13 @@ export default function App() {
         }
 
         await loadReports(market, targetDate, true)
+
+        // 非同步背景觸發雲端函式（不阻塞輸入框，讓使用者可繼續連續新增下一檔）
+        supabase.functions
+          .invoke('sync-stock', { body: { symbol, name, market: stockMarket } })
+          .then(() => loadReports(market, targetDate, true))
+          .catch((err) => console.error('雲端同步呼叫失敗:', err))
+
         return true
       } catch (err) {
         console.error('新增股票失敗:', err)

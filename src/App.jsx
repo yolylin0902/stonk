@@ -7,8 +7,21 @@ import StockCard from './components/StockCard'
 import AddStockCard from './components/AddStockCard'
 import ParkSleepSection from './components/ParkSleepSection'
 import { supabase } from './lib/supabase'
+import { autoLookupStock } from './lib/stockLookup'
 import { Loader2, BarChart3, Layers } from 'lucide-react'
 import { IOS_SPRING, TACTILE_TAP } from './motion/iosMotion'
+
+// 判定標的之新聞總結是否需要由 AI 重整或翻譯（包含未完成佔位文字，或舊版殘留的未翻譯純英文新聞標題）
+export const needsAiAnalysis = (headline) => {
+  if (!headline) return true
+  if (headline.includes('AI 新聞分析整理中') || headline.includes('正在抓取')) return true
+  // 若繁體中文字元少於 3 個且包含英文字串，判定為未翻譯的英文新聞標題，需自動透過 AI 重整
+  const chineseChars = headline.match(/[\u4e00-\u9fa5]/g) || []
+  if (chineseChars.length < 3 && /[a-zA-Z]{4,}/.test(headline)) {
+    return true
+  }
+  return false
+}
 
 // 判斷是否為真正的官方純大盤指數（嚴格只認 ^ 開頭，例如美股 ^GSPC, ^IXIC, ^DJI, ^SOX；台股 ^TWII）
 // 所有 ETF（例如 QQQ, SOXX, SPY, 0050.TW 等）皆歸類在一般自選個股區，不列入指數區
@@ -166,7 +179,7 @@ export default function App() {
     }
   }
 
-  // 自我修復（Self-Healing）：針對卡在「AI 新聞分析整理中」之標的，在背景非同步呼叫 sync-stock 補齊分析
+  // 自我修復（Self-Healing）：針對卡在「AI 新聞分析整理中」或未翻譯英文標題之標的，在背景非同步呼叫 sync-stock 補齊繁中分析
   const triggerSelfHeal = useCallback((stuckStocks, targetMarket, targetDate) => {
     const now = Date.now()
     let delay = 0
@@ -178,13 +191,18 @@ export default function App() {
         const currentDelay = delay
         delay += 800
 
+        const bestStock = autoLookupStock(currentStock.symbol)
+        const effectiveName = (bestStock?.name && bestStock.name !== currentStock.symbol)
+          ? bestStock.name
+          : currentStock.name
+
         setTimeout(() => {
           supabase.functions
             .invoke('sync-stock', {
               body: {
                 mode: 'full',
                 symbol: currentStock.symbol,
-                name: currentStock.name,
+                name: effectiveName,
                 market: currentStock.market || targetMarket,
               },
             })
@@ -326,11 +344,15 @@ export default function App() {
           const isAiPending = Boolean(
             isLatestDate &&
             !pollTimedOutRef.current &&
-            found.headline &&
-            found.headline.includes('AI 新聞分析整理中')
+            needsAiAnalysis(found.headline)
           )
+          const bestStock = autoLookupStock(w.symbol)
+          const resolvedName = (bestStock?.name && bestStock.name !== w.symbol)
+            ? bestStock.name
+            : (found.name && found.name !== w.symbol ? found.name : (w.name || w.symbol))
           return {
             ...found,
+            name: resolvedName,
             isAiPending,
             isPending: false,
           }
@@ -390,10 +412,10 @@ export default function App() {
       )
       const sortedUserStocks = [...pendingList, ...readyList]
 
-      // 自我修復（Self-Healing）：若有卡在「AI 新聞分析整理中」之標的，背景非同步重新觸發 sync-stock mode: 'full'
+      // 自我修復（Self-Healing）：若有卡在「AI 新聞分析整理中」或英文新聞標題之標的，背景非同步重新觸發 sync-stock mode: 'full'
       if (isLatestDate && sessionRef.current?.user) {
         const stuckStocks = userStockReports.filter(
-          (r) => r.headline && r.headline.includes('AI 新聞分析整理中')
+          (r) => needsAiAnalysis(r.headline)
         )
         if (stuckStocks.length > 0) {
           triggerSelfHeal(stuckStocks, targetMarket, targetDate)

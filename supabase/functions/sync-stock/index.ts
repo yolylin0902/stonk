@@ -182,11 +182,13 @@ ${newsSummary || "（目前查無最新即時新聞，請根據該股所屬產�
 
 請嚴格輸出純 JSON 格式（絕對不要使用 Markdown 標籤如 \`\`\`json，直接輸出合法 JSON 物件），欄位規範如下：
 1. "sentiment": 僅能為 "利多"、"利空" 或 "中性"（字串）。
-2. "headline": 20 字以內的繁體中文精闢總結 headline（說明今日漲跌或市場核心主因）。
+2. "headline": 20 字以內的繁體中文精闢總結 headline（說明今日漲跌或市場核心主因；無論新聞為何種語言，一律以道地繁體中文呈現，嚴禁殘留英文標題）。
 3. "story_bullets": 2 到 3 點繁體中文重點條列（陣列字串），每點 30~50 字，依序說明：
    - 核心驅動事件、產業趨勢或大盤氛圍。
    - 技術面、評價面或法人資金動向。
    - 後續應留意的觀察關鍵指標。
+   （特別注意：若輸入之新聞為英文，務必完整翻譯並精準編譯為客觀繁體中文重點，絕對不可出現未翻譯之英文句子或英文標籤）。
+4. 嚴格禁止使用任何 Emoji 表情符號（如 📈、📉、🚀、⚠️、🔥 等）。
 
 輸出範例格式：
 {
@@ -459,7 +461,7 @@ Deno.serve(async (req) => {
       console.warn("未設定 GEMINI_API_KEY，將使用新聞標題或行情保底");
     }
 
-    // 關鍵保底：若 AI 成功則寫入 AI 結果；若 AI 未回傳但有新聞則用新聞；若皆無則產生明確行情保底，絕不留在「AI 新聞分析整理中...」
+    // 關鍵保底：若 AI 成功則寫入 AI 結果；若 AI 未回傳則產生全繁體中文行情保底，絕不輸出未翻譯的英文新聞標題
     if (aiResult) {
       const phase2Record = {
         report_date: reportDate,
@@ -474,20 +476,6 @@ Deno.serve(async (req) => {
         news_links: newsItems,
       };
       await adminClient.from("daily_reports").upsert(phase2Record, { onConflict: "report_date,symbol" });
-    } else if (newsItems.length > 0) {
-      const fallbackPhase2 = {
-        report_date: reportDate,
-        market: market,
-        symbol: symbol,
-        name: name,
-        close_price: priceInfo.price,
-        change_percent: priceInfo.change_percent,
-        sentiment: priceInfo.change_percent > 0.5 ? "利多" : (priceInfo.change_percent < -0.5 ? "利空" : "中性"),
-        headline: newsItems[0]?.title || `${name}最新行情收盤於 ${priceInfo.price}`,
-        story_bullets: newsItems.slice(0, 3).map((n) => n.title),
-        news_links: newsItems,
-      };
-      await adminClient.from("daily_reports").upsert(fallbackPhase2, { onConflict: "report_date,symbol" });
     } else {
       const trendStr = priceInfo.change_percent > 0
         ? `上漲 ${priceInfo.change_percent}%`
@@ -500,13 +488,13 @@ Deno.serve(async (req) => {
         close_price: priceInfo.price,
         change_percent: priceInfo.change_percent,
         sentiment: priceInfo.change_percent > 0.5 ? "利多" : (priceInfo.change_percent < -0.5 ? "利空" : "中性"),
-        headline: `${name}收盤報 ${priceInfo.price}（${trendStr}），市場密切關注後續量能變化`,
+        headline: `${name || symbol}收盤報 ${priceInfo.price}（${trendStr}），市場密切關注產業後續動態`,
         story_bullets: [
           `當日行情：標的最新交易價格為 ${priceInfo.price}，全日表現為 ${trendStr}。`,
-          `市場動態：所屬板塊呈現震盪整理，市場資金持續觀察基本面與總體經濟指引。`,
-          `後續觀察：宜留意短線支撐均線力道與後續重要財報法說消息。`,
+          `市場動態：所屬產業板塊呈現震盪走勢，市場資金持續觀察供應鏈與總體經濟指引。`,
+          `後續觀察：宜留意短線關鍵支撐位表現，以及後續法說會與重要產業消息公布。`,
         ],
-        news_links: [],
+        news_links: newsItems,
       };
       await adminClient.from("daily_reports").upsert(guaranteedRecord, { onConflict: "report_date,symbol" });
     }

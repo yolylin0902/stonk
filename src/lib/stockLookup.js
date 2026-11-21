@@ -32,6 +32,8 @@ const COMMON_ALIASES = {
   '美光': { symbol: 'MU', name: '美光科技 (Micron)', market: 'US' },
   '美光科技': { symbol: 'MU', name: '美光科技 (Micron)', market: 'US' },
   'TSM': { symbol: 'TSM', name: '台積電 ADR', market: 'US' },
+  'ASML': { symbol: 'ASML', name: '艾司摩爾 (ASML)', market: 'US' },
+  '艾司摩爾': { symbol: 'ASML', name: '艾司摩爾 (ASML)', market: 'US' },
   '台積電': { symbol: '2330.TW', name: '台積電', market: 'TW' },
   '台積': { symbol: '2330.TW', name: '台積電', market: 'TW' },
   '2330': { symbol: '2330.TW', name: '台積電', market: 'TW' },

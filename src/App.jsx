@@ -5,6 +5,7 @@ import MarketTabs from './components/MarketTabs'
 import DateSelector from './components/DateSelector'
 import StockCard from './components/StockCard'
 import AddStockCard from './components/AddStockCard'
+import ParkSleepSection from './components/ParkSleepSection'
 import { supabase } from './lib/supabase'
 import { autoLookupStock } from './lib/stockLookup'
 import { loadTwStockMap, resolveDisplayName } from './lib/twStockMap'
@@ -1023,6 +1024,9 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* 周邊休閒公園 · 避難鄰里分析 */}
+              <ParkSleepSection />
 
               {/* 錯誤警告條 */}
               {errorMsg && (

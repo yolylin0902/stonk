@@ -421,6 +421,23 @@ JSON 格式範例：
 
 
 # ----------------------------------------------------------------------
+# 核心大盤指數與基準標的（確保排程每日必爬，不依賴個人自選股清單是否有追蹤）
+# ----------------------------------------------------------------------
+DEFAULT_MARKET_INDEXES: Dict[str, List[Dict[str, Any]]] = {
+    "US": [
+        {"symbol": "^GSPC", "name": "標普 500 指數", "market": "US"},
+        {"symbol": "^IXIC", "name": "那斯達克綜合指數", "market": "US"},
+        {"symbol": "^DJI", "name": "道瓊工業指數", "market": "US"},
+        {"symbol": "SOXX", "name": "費城半導體 ETF", "market": "US"},
+    ],
+    "TW": [
+        {"symbol": "^TWII", "name": "台灣加權指數", "market": "TW"},
+        {"symbol": "0050.TW", "name": "元大台灣50", "market": "TW"},
+    ],
+}
+
+
+# ----------------------------------------------------------------------
 # 主執行流程
 # ----------------------------------------------------------------------
 def main():
@@ -456,9 +473,29 @@ def main():
         logger.info(f"📊 開始處理市場：{m}")
         logger.info(f"==========================================")
 
-        stocks = fetch_watchlist(supabase_client, market=m)
+        # 1. 取得該市場的固定大盤指數（永遠獨立更新）
+        market_indexes = DEFAULT_MARKET_INDEXES.get(m, [])
+
+        # 2. 取得使用者自選股（經 SERVICE_ROLE 穿透 RLS 撈取全體去重標的）
+        user_stocks = fetch_watchlist(supabase_client, market=m)
+
+        # 3. 合併大盤指數與自選股，並依 symbol 去重（大盤指數置前）
+        stocks = []
+        seen_syms = set()
+        for idx_item in market_indexes:
+            sym = idx_item["symbol"].upper()
+            if sym not in seen_syms:
+                seen_syms.add(sym)
+                stocks.append(idx_item)
+
+        for u_item in user_stocks:
+            sym = (u_item.get("symbol") or "").upper()
+            if sym and sym not in seen_syms:
+                seen_syms.add(sym)
+                stocks.append(u_item)
+
         if not stocks:
-            logger.warning(f"⚠️ 在市場 {m} 中找不到任何自選股，請檢查 Supabase watchlist 表。")
+            logger.warning(f"⚠️ 在市場 {m} 中無任何大盤指數或自選股可處理。")
             continue
 
         if args.limit and args.limit > 0:

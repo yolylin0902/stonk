@@ -3,11 +3,10 @@ import Header from './components/Header'
 import MarketTabs from './components/MarketTabs'
 import DateSelector from './components/DateSelector'
 import StockCard from './components/StockCard'
-import WatchlistModal from './components/WatchlistModal'
-import EmptyState from './components/EmptyState'
+import AddStockCard from './components/AddStockCard'
 import ParkSleepSection from './components/ParkSleepSection'
 import { supabase } from './lib/supabase'
-import { Loader2, BarChart3, Layers, Plus } from 'lucide-react'
+import { Loader2, BarChart3, Layers } from 'lucide-react'
 
 // 判斷是否為市場指數或核心 ETF (放在指數區)
 export const isMarketIndex = (symbol) => {
@@ -39,7 +38,6 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
-  const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false)
   const [marketCounts, setMarketCounts] = useState({ US: 0, TW: 0 })
 
   // 待分析個股的計數器與超時狀態
@@ -156,34 +154,41 @@ export default function App() {
     }
   }, [])
 
-  // 2. 撈取當日指定市場的報告，並整合個人 watchlist 中剛新增尚未爬取報告的標的
+  // 2. 撈取當日指定市場的報告：指數區獨立於 watchlist；持股區嚴格比對個人自選清單
   const loadReports = useCallback(async (targetMarket, targetDate) => {
     try {
       setLoading(true)
       setErrorMsg('')
 
-      // 撈取全量報告
+      // 撈取指定日期的全部報告 (包含指數與各股票)
       let allQuery = supabase.from('daily_reports').select('*')
       if (targetDate) {
         allQuery = allQuery.eq('report_date', targetDate)
       }
       const { data: allData } = await allQuery
 
-      // 取得個人自選股表 (RLS 會自動篩選該使用者的標的)
+      // 取得個人自選股表 (RLS 會自動依 user_id 篩選該登入者的標的)
       const { data: watchData } = await supabase.from('watchlist').select('*')
 
-      const currentMarketReports = (allData || []).filter(
-        (r) => r.market === targetMarket
+      // ── A. 大盤指數獨立處理：只要符合指數標準即呈現，不依賴個人 watchlist 是否有追蹤 ──
+      const indexReports = (allData || []).filter(
+        (r) => r.market === targetMarket && isMarketIndex(r.symbol)
       )
 
-      // 檢查是否有在個人 watchlist 但尚未產出 daily_reports 的標的
-      const missingFromReports = (watchData || [])
-        .filter(
-          (w) =>
-            w.market === targetMarket &&
-            !currentMarketReports.some((r) => r.symbol === w.symbol)
+      // ── B. 個人持股嚴格比對：只呈現該使用者 watchlist 中有追蹤的個股 ──
+      const userWatchlist = (watchData || []).filter(
+        (w) => w.market === targetMarket
+      )
+
+      const userStockReports = userWatchlist.map((w) => {
+        const found = (allData || []).find(
+          (r) => r.market === targetMarket && r.symbol === w.symbol
         )
-        .map((w) => ({
+        if (found) {
+          return found
+        }
+        // 剛加入但尚未有 daily_reports 的新標的，呈現 pending 預覽卡片
+        return {
           id: 'pending_' + w.symbol,
           symbol: w.symbol,
           name: w.name,
@@ -192,34 +197,28 @@ export default function App() {
           change_percent: null,
           sentiment: '中性',
           headline: pollTimedOut
-            ? '暫未取得當日報告，請稍後點擊右上角重新整理'
+            ? '暫未取得收盤報告，可稍後點擊右上角重新整理'
             : '即時分析中，正在抓取最新行情與新聞...',
           story_bullets: pollTimedOut
             ? [
                 '已將此標的加入自選追蹤，後端排程將於收盤後自動處理。',
-                '若需立即更新，可確認背景同步守護程式是否已啟動。',
                 '點擊右上角重新整理按鈕可再次嘗試獲取最新報告。'
               ]
             : [
-                '已成功將此標的加入自選追蹤，後端同步守護程序已自動響應。',
-                '正在透過金融數據源抓取最新交易日價格與漲跌幅。',
-                '正在爬梳即時新聞並歸納關鍵驅動原因，完成後自動呈現。'
+                '已成功將此標的加入個人自選，後端同步程式已自動響應。',
+                '正在抓取最新交易日價格、漲跌幅與關鍵新聞故事。'
               ],
           news_links: [],
           isPending: true
-        }))
-
-      const combined = [...currentMarketReports, ...missingFromReports].sort(
-        (a, b) => {
-          // 指數置頂，其餘按漲跌幅排序
-          const aIsIdx = isMarketIndex(a.symbol)
-          const bIsIdx = isMarketIndex(b.symbol)
-          if (aIsIdx && !bIsIdx) return -1
-          if (!aIsIdx && bIsIdx) return 1
-          return Number(b.change_percent || 0) - Number(a.change_percent || 0)
         }
+      })
+
+      // 排序：指數按原有順序，自選個股按漲跌幅排序
+      userStockReports.sort(
+        (a, b) => Number(b.change_percent || 0) - Number(a.change_percent || 0)
       )
 
+      const combined = [...indexReports, ...userStockReports]
       setReports(combined)
     } catch (err) {
       console.error('撈取報告失敗:', err)
@@ -328,6 +327,57 @@ export default function App() {
     return reports.filter((r) => !isMarketIndex(r.symbol))
   }, [reports])
 
+  // 圖卡「一加（+）」：直接在自選股列表新增並寫入 Supabase watchlist
+  const handleAddStock = async ({ symbol, name, market: stockMarket }) => {
+    if (!session?.user) return false
+    try {
+      const { error } = await supabase.from('watchlist').insert([
+        {
+          user_id: session.user.id,
+          symbol,
+          name,
+          market: stockMarket,
+        },
+      ])
+
+      if (error) {
+        if (error.code === '23505') {
+          throw new Error(`${symbol} 已在自選股清單中`)
+        }
+        throw error
+      }
+
+      pollCountRef.current = 0
+      setPollTimedOut(false)
+      const targetDate = selectedDate || (await loadAvailableDates(market))
+      await loadReports(market, targetDate)
+      return true
+    } catch (err) {
+      console.error('新增股票失敗:', err)
+      throw err
+    }
+  }
+
+  // 圖卡「一減（−）」：直接在卡片上防誤觸兩段式移除
+  const handleRemoveStock = async (stockSymbol) => {
+    if (!session?.user) return
+    try {
+      const { error } = await supabase
+        .from('watchlist')
+        .delete()
+        .eq('user_id', session.user.id)
+        .eq('symbol', stockSymbol)
+
+      if (error) throw error
+
+      // 本地立即過濾狀態以獲得平滑淡出反應
+      setReports((prev) => prev.filter((r) => r.symbol !== stockSymbol))
+    } catch (err) {
+      console.error('移除自選股失敗:', err)
+      setErrorMsg('移除自選股失敗：' + (err.message || '連線異常'))
+    }
+  }
+
   // Auth 載入中畫面
   if (authLoading) {
     return (
@@ -367,7 +417,7 @@ export default function App() {
           }}
         />
 
-        <div className="w-full max-w-sm ios-glass rounded-[32px] p-7 border border-white/[0.12] shadow-2xl space-y-6">
+        <div className="w-full max-w-sm ios-glass rounded-[32px] p-7 border border-white/[0.12] shadow-2xl space-y-6 ios-card-transition">
           <div className="text-center space-y-1.5">
             <span className="text-[11px] font-semibold tracking-widest uppercase text-white/40">
               Personalized Watchlist
@@ -455,7 +505,7 @@ export default function App() {
   // 已登入：展示主儀表板
   return (
     <div className="min-h-screen bg-transparent text-white flex flex-col">
-      {/* 玻璃後方低彩度光影（左上、右中、左下 3 團冷銀灰與深海霧藍，滑動時呈現通透折射） */}
+      {/* 玻璃後方低彩度光影 */}
       <div
         aria-hidden="true"
         className="fixed inset-0 -z-10 pointer-events-none overflow-hidden"
@@ -467,18 +517,17 @@ export default function App() {
           `
         }}
       />
-      {/* 頂部導航 */}
+      {/* 頂部導航（僅保留標題、目前暱稱膠囊與重新整理按鈕） */}
       <Header
         user={session.user}
         onSignOut={handleSignOut}
-        onOpenWatchlist={() => setIsWatchlistModalOpen(true)}
         onRefresh={handleRefresh}
         isRefreshing={refreshing}
       />
 
       {/* 主內容區塊 - Mobile-First 容器 */}
       <main className="flex-1 max-w-md w-full mx-auto px-4 py-4 space-y-4">
-        {/* 市場頁籤切換 (美股盤後 / 台股盤後) */}
+        {/* 市場頁籤切換（帶有絕對定位滑動膠囊） */}
         <MarketTabs
           activeMarket={market}
           onSelectMarket={handleMarketChange}
@@ -545,15 +594,9 @@ export default function App() {
               {market === 'US' ? '美股' : '台股'}
             </span>
           </div>
-        ) : reports.length === 0 ? (
-          <EmptyState
-            market={market}
-            selectedDate={selectedDate}
-            onOpenWatchlist={() => setIsWatchlistModalOpen(true)}
-          />
         ) : (
           <div className="space-y-5 pb-10">
-            {/* 1. 市場指數區 — 僅在 INDEX 模式顯示 */}
+            {/* 1. 市場指數區 — 僅在 INDEX 模式顯示（獨立穩定顯示，不依賴個人自選清單） */}
             {cardViewMode === 'INDEX' && (
               <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
@@ -576,52 +619,40 @@ export default function App() {
               </section>
             )}
 
-            {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示 */}
+            {/* 2. 自選個股區 — 僅在 STOCKS 模式顯示（圖卡一加一減設計） */}
             {cardViewMode === 'STOCKS' && (
               <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-[11px] font-medium text-white/40 uppercase tracking-widest">
                     自選股
                   </span>
-                  <button
-                    onClick={() => setIsWatchlistModalOpen(true)}
-                    className="flex items-center space-x-1 text-[12px] text-white/50 hover:text-white/80 transition-colors duration-150 font-medium"
-                  >
-                    <Plus className="w-3.5 h-3.5" strokeWidth={1.75} />
-                    <span>管理</span>
-                  </button>
+                  <span className="text-[10px] text-white/25 tabular-nums">
+                    {userStockReports.length}
+                  </span>
                 </div>
 
-                {userStockReports.length === 0 ? (
-                  <div className="p-8 rounded-[24px] border border-dashed border-white/[0.07] bg-white/[0.02] text-center space-y-3">
-                    <p className="text-xs text-white/40">尚無自選股</p>
-                    <button
-                      onClick={() => setIsWatchlistModalOpen(true)}
-                      className="px-4 py-2 rounded-full bg-white/[0.08] hover:bg-white/[0.12] text-white/70 text-xs font-medium transition-all duration-150 active:scale-[0.97]"
-                    >
-                      + 新增自選股
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {userStockReports.map((report) => (
-                      <StockCard key={report.id || report.symbol} report={report} />
-                    ))}
-                  </div>
-                )}
+                {/* 個人個股圖卡列表 */}
+                <div className="space-y-3">
+                  {userStockReports.map((report) => (
+                    <StockCard
+                      key={report.id || report.symbol}
+                      report={report}
+                      onRemove={handleRemoveStock}
+                    />
+                  ))}
+
+                  {/* 圖卡「一加（+）」：列表最末端原地展開的半透明霧面玻璃新增圖卡 */}
+                  <AddStockCard
+                    market={market}
+                    onAddStock={handleAddStock}
+                    existingSymbols={userStockReports.map((r) => r.symbol)}
+                  />
+                </div>
               </section>
             )}
           </div>
         )}
       </main>
-
-      {/* 管理自選股彈出視窗 */}
-      <WatchlistModal
-        isOpen={isWatchlistModalOpen}
-        onClose={() => setIsWatchlistModalOpen(false)}
-        onUpdated={handleRefresh}
-        user={session.user}
-      />
     </div>
   )
 }

@@ -1,10 +1,9 @@
 import React from 'react'
-import { RefreshCw, SlidersHorizontal, LogOut } from 'lucide-react'
+import { RefreshCw, LogOut } from 'lucide-react'
 
 export default function Header({
   user,
   onSignOut,
-  onOpenWatchlist,
   onRefresh,
   isRefreshing,
 }) {
@@ -37,7 +36,7 @@ export default function Header({
               className="h-8 px-2.5 rounded-full ios-glass-control flex items-center space-x-1.5 active:scale-[0.95] transition-all duration-150 ease-out text-white/70 hover:text-white"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
-              <span className="text-[12px] font-medium max-w-[70px] truncate">
+              <span className="text-[12px] font-medium max-w-[80px] truncate">
                 {displayName}
               </span>
               <LogOut
@@ -61,20 +60,6 @@ export default function Header({
               strokeLinecap="round"
               strokeLinejoin="round"
             />
-          </button>
-
-          <button
-            onClick={onOpenWatchlist}
-            aria-label="自選股"
-            className="h-8 px-2.5 rounded-full ios-glass-control flex items-center space-x-1.5 active:scale-[0.95] transition-all duration-150 ease-out"
-          >
-            <SlidersHorizontal
-              className="w-[13px] h-[13px] text-white/70"
-              strokeWidth={1.75}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <span className="text-[12px] text-white/70 font-medium">自選股</span>
           </button>
         </div>
       </div>

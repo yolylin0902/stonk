@@ -7,23 +7,29 @@ export default function MarketTabs({ activeMarket, onSelectMarket, counts }) {
   ]
 
   return (
-    <div className="flex p-1 bg-white/[0.07] rounded-full border border-white/[0.07]">
+    <div className="relative flex p-1 bg-white/[0.07] rounded-full border border-white/[0.07]">
+      {/* 絕對定位的半透明霧面玻璃膠囊滑塊 */}
+      <div
+        className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-full bg-white/[0.16] shadow-sm transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] pointer-events-none ${
+          activeMarket === 'TW' ? 'translate-x-full' : 'translate-x-0'
+        }`}
+      />
+
       {tabs.map((tab) => {
         const isActive = activeMarket === tab.key
         return (
           <button
             key={tab.key}
+            type="button"
             onClick={() => onSelectMarket(tab.key)}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2 rounded-full text-[14px] font-medium transition-all duration-200 active:scale-[0.97] ${
-              isActive
-                ? 'bg-white/[0.16] text-white shadow-sm'
-                : 'text-white/45 hover:text-white/70'
-            }`}
+            className="relative z-10 flex-1 flex items-center justify-center space-x-2 py-2 rounded-full text-[14px] font-medium transition-colors duration-200 active:scale-[0.98]"
           >
-            <span>{tab.label}</span>
+            <span className={isActive ? 'text-white font-semibold' : 'text-white/45 hover:text-white/70'}>
+              {tab.label}
+            </span>
             <span
-              className={`text-[11px] font-semibold tabular ${
-                isActive ? 'text-white/70' : 'text-white/25'
+              className={`text-[11px] font-semibold tabular transition-colors duration-200 ${
+                isActive ? 'text-white/75' : 'text-white/25'
               }`}
             >
               {tab.count}

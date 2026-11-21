@@ -80,13 +80,27 @@
 /* ─── Tabular numbers everywhere ─── */
 .tabular { font-variant-numeric: tabular-nums; }
 
-/* ─── Subtle fade-in ─── */
+/* ─── Subtle fade-in & Apple Spring transitions ─── */
 @keyframes ios-fade-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .ios-fade-in {
   animation: ios-fade-in 0.22s ease-out both;
+}
+
+@keyframes ios-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.ios-card-transition {
+  animation: ios-card-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 /* ─── Selection colour ─── */

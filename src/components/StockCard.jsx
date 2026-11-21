@@ -1,8 +1,34 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { ChevronDown, ChevronUp, Loader2, ExternalLink } from 'lucide-react'
 
-export default function StockCard({ report }) {
+export default function StockCard({ report, onRemove }) {
   const [isNewsExpanded, setIsNewsExpanded] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [isRemoving, setIsRemoving] = useState(false)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const handleDeleteClick = (e) => {
+    e.stopPropagation()
+    if (!confirmDelete) {
+      setConfirmDelete(true)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => {
+        setConfirmDelete(false)
+      }, 3000)
+    } else {
+      if (timerRef.current) clearTimeout(timerRef.current)
+      setIsRemoving(true)
+      if (onRemove) {
+        onRemove(symbol)
+      }
+    }
+  }
 
   const {
     symbol = '',
@@ -58,7 +84,7 @@ export default function StockCard({ report }) {
     ? `${change_percent > 0 ? '+' : ''}${change_percent}%`
     : null
 
-  // 安全解析陣列或 JSON 字串，避免非法格式字串導致整頁崩潰
+  // 安全解析陣列或 JSON 字串
   const parseSafeArray = (val) => {
     if (!val) return []
     if (Array.isArray(val)) return val
@@ -77,38 +103,82 @@ export default function StockCard({ report }) {
   const news = parseSafeArray(news_links)
 
   return (
-    <article className="ios-glass rounded-[28px] p-5 transition-all duration-150 ease-out active:scale-[0.995]">
-      {/* ── Row 1: Symbol / Name  ·  Price / Change ── */}
+    <article
+      className={`ios-glass rounded-[28px] p-5 transition-all duration-300 ease-out active:scale-[0.995] ios-card-transition ${
+        isRemoving ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100'
+      }`}
+    >
+      {/* ── Row 1: Symbol / Name  ·  Price / Change  ·  Remove Action ── */}
       <div className="flex items-start justify-between">
         {/* Left: symbol (large) + name below */}
-        <div>
-          <h2 className="text-[22px] font-bold text-white tracking-tight leading-tight tabular">
+        <div className="truncate mr-2">
+          <h2 className="text-[22px] font-bold text-white tracking-tight leading-tight tabular truncate">
             {symbol}
           </h2>
-          <p className="text-[13px] text-white/55 font-normal mt-0.5 leading-tight truncate max-w-[160px]">
+          <p className="text-[13px] text-white/55 font-normal mt-0.5 leading-tight truncate max-w-[170px]">
             {name}
           </p>
         </div>
 
-        {/* Right: price + change capsule */}
-        <div className="text-right">
-          {close_price != null ? (
-            <>
-              <div className={`text-[22px] font-semibold tracking-tight tabular ${trendTextColor}`}>
-                {formattedPrice}
+        {/* Right: price + change capsule + direct delete button */}
+        <div className="flex items-start space-x-2.5 flex-shrink-0">
+          <div className="text-right">
+            {close_price != null ? (
+              <>
+                <div className={`text-[22px] font-semibold tracking-tight tabular ${trendTextColor}`}>
+                  {formattedPrice}
+                </div>
+                <div className="mt-1 flex justify-end">
+                  {changePctText && (
+                    <span className={`text-[12px] font-semibold tabular px-2.5 py-0.5 rounded-full ${trendCapsuleCls}`}>
+                      {changePctText}
+                    </span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center space-x-1.5 mt-1">
+                <Loader2 className="w-3.5 h-3.5 text-white/30 animate-spin" strokeWidth={1.75} />
+                <span className="text-[12px] text-white/30">分析中</span>
               </div>
-              <div className="mt-1 flex justify-end">
-                {changePctText && (
-                  <span className={`text-[12px] font-semibold tabular px-2.5 py-0.5 rounded-full ${trendCapsuleCls}`}>
-                    {changePctText}
-                  </span>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center space-x-1.5 mt-1">
-              <Loader2 className="w-3.5 h-3.5 text-white/30 animate-spin" strokeWidth={1.75} />
-              <span className="text-[12px] text-white/30">更新中</span>
+            )}
+          </div>
+
+          {/* 直覺單色霧面玻璃圓形按鈕（純細線 SVG − 號，防誤觸兩段式確認） */}
+          {onRemove && (
+            <div className="pt-0.5">
+              {confirmDelete ? (
+                <button
+                  type="button"
+                  onClick={handleDeleteClick}
+                  disabled={isRemoving}
+                  className="h-7 px-2.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[11px] font-medium flex items-center space-x-1 transition-all duration-200 active:scale-95 shadow-sm"
+                >
+                  <span>移除</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleDeleteClick}
+                  aria-label={`移除 ${symbol}`}
+                  title="移除此追蹤標的"
+                  className="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-rose-400/15 text-white/45 hover:text-rose-300 border border-white/[0.07] hover:border-rose-400/20 flex items-center justify-center transition-all duration-200 active:scale-90"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -117,7 +187,6 @@ export default function StockCard({ report }) {
       {/* ── Row 2: Headline (one-sentence reason) ── */}
       {headline && (
         <div className="mt-4">
-          {/* Sentiment tag */}
           {sentiment && (
             <span className={sentimentCls}>{sentiment}</span>
           )}

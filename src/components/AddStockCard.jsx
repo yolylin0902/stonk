@@ -69,99 +69,76 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
     setFeedback({ type: '', message: '' })
   }
 
-  const handleSelectSuggestion = (item) => {
-    setInputVal(item.name ? `${item.name} (${item.symbol})` : item.symbol)
-    setNameVal(item.name || '')
-    requestAnimationFrame(() => {
-      inputRef.current?.focus()
-    })
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  // 核心統一送出函式：嚴格空值與格式防呆
+  const submitStock = async (rawSymbol, rawName = '') => {
     setFeedback({ type: '', message: '' })
+    if (isSubmitting) return
 
-    let raw = inputVal.trim()
-    if (!raw) {
-      setFeedback({ type: 'error', message: '請輸入股票代號（例如 NVDA、2330、元太）' })
-      return
-    }
+    let sym = (rawSymbol || '').trim()
+    let name = (rawName || '').trim()
 
-    let targetSymbol = ''
-    let targetName = nameVal.trim()
-
-    // 1. 若輸入包含中文字，必須使用 detectedInfo.symbol，絕不能把中文寫入 symbol
-    if (/[\u4e00-\u9fa5]/.test(raw)) {
-      if (detectedInfo?.symbol && !/[\u4e00-\u9fa5]/.test(detectedInfo.symbol)) {
-        targetSymbol = detectedInfo.symbol
-        if (!targetName) targetName = detectedInfo.name || raw
-      } else {
-        setFeedback({ type: 'error', message: `查無「${raw}」對應之股票代號，請直接輸入代號（如 2330, 8069）` })
-        return
-      }
-    } else {
-      // 2. 純英數代號輸入
-      const cleanUpper = raw.toUpperCase().replace(/\s+/g, '')
-
-      // 若在台股模式，且為純數字 (4~6碼)
-      if (isTW && /^\d{4,6}$/.test(cleanUpper)) {
-        // 優先看 detectedInfo 是否已精確比對出 .TWO 或 .TW (例如 8069.TWO, 2330.TW)
-        if (detectedInfo && (detectedInfo.symbol === `${cleanUpper}.TWO` || detectedInfo.symbol === `${cleanUpper}.TW`)) {
-          targetSymbol = detectedInfo.symbol
-          if (!targetName) targetName = detectedInfo.name
-        } else {
-          // 未知台股數字，預設補 .TW 送出交由後端自動回退
-          targetSymbol = `${cleanUpper}.TW`
-        }
-      } else if (cleanUpper.endsWith('.TW') || cleanUpper.endsWith('.TWO')) {
-        targetSymbol = cleanUpper
-      } else {
-        // 美股或其他代號（支援連字號如 BRK-B、點轉線如 BRK.B）
-        let usSym = cleanUpper
-        if (/^[A-Z]{1,5}\.[A-Z]$/.test(usSym)) {
-          usSym = usSym.replace('.', '-')
-        }
-        targetSymbol = usSym
-      }
-    }
-
-    if (!targetSymbol) {
+    // 1. 若為空字串，直接擋下
+    if (!sym) {
       setFeedback({ type: 'error', message: '請輸入有效的股票代號' })
       return
     }
 
-    // 防呆：阻擋輸入 ^ 開頭的大盤指數代號
-    if (targetSymbol.startsWith('^') || raw.startsWith('^')) {
-      setFeedback({
-        type: 'error',
-        message: '大盤指數已固定於指數區，無需手動新增',
-      })
+    // 2. 嚴格防呆：阻擋純中文或未成功解析之中文代號
+    if (/[\u4e00-\u9fa5]/.test(sym)) {
+      setFeedback({ type: 'error', message: `「${sym}」查無對應之英數代號，請直接輸入代號（如 2330）` })
       return
     }
 
-    if (existingSymbols.includes(targetSymbol)) {
-      setFeedback({ type: 'error', message: `${targetSymbol} 已在自選股清單中` })
+    // 3. 代號正規化
+    let cleanUpper = sym.toUpperCase().replace(/\s+/g, '')
+
+    // 美股小數點轉連字號 (例如 BRK.B -> BRK-B)
+    if (!isTW && /^[A-Z]{1,5}\.[A-Z]$/.test(cleanUpper)) {
+      cleanUpper = cleanUpper.replace('.', '-')
+    }
+
+    // 台股純數字 (4~6碼) 自動補 .TW
+    if (isTW && /^\d{4,6}$/.test(cleanUpper)) {
+      cleanUpper = `${cleanUpper}.TW`
+    }
+
+    // 4. 嚴格格式校驗：1~12 位大寫英數、點或連字號
+    if (!/^[A-Z0-9.\-]{1,12}$/.test(cleanUpper)) {
+      setFeedback({ type: 'error', message: `代號格式不正確：${cleanUpper}` })
       return
     }
 
-    if (!targetName) {
-      if (detectedInfo?.name && detectedInfo.symbol === targetSymbol) {
-        targetName = detectedInfo.name
+    // 5. 阻擋大盤指數
+    if (cleanUpper.startsWith('^')) {
+      setFeedback({ type: 'error', message: '大盤指數已固定於指數區，無需手動新增' })
+      return
+    }
+
+    // 6. 重複自選股檢查
+    if (existingSymbols.includes(cleanUpper)) {
+      setFeedback({ type: 'error', message: `${cleanUpper} 已在自選股清單中` })
+      return
+    }
+
+    // 7. 補齊公司名稱
+    if (!name) {
+      if (detectedInfo?.name && (detectedInfo.symbol === cleanUpper || detectedInfo.symbol === sym)) {
+        name = detectedInfo.name
       } else {
-        targetName = targetSymbol
+        name = cleanUpper
       }
     }
 
     try {
       setIsSubmitting(true)
       const success = await onAddStock({
-        symbol: targetSymbol,
-        name: targetName,
+        symbol: cleanUpper,
+        name: name,
         market: isTW ? 'TW' : 'US',
       })
 
       if (success) {
-        setFeedback({ type: 'success', message: `已加入 ${targetSymbol} (${targetName})` })
+        setFeedback({ type: 'success', message: `已加入 ${cleanUpper} (${name})` })
         setInputVal('')
         setNameVal('')
         requestAnimationFrame(() => {
@@ -176,6 +153,49 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  // 表單送出處理（使用者按下 Enter 或點擊「加入」）
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    let raw = inputVal.trim()
+    if (!raw) {
+      setFeedback({ type: 'error', message: '請輸入股票代號（例如 NVDA、2330、元太）' })
+      return
+    }
+
+    let targetSymbol = ''
+    let targetName = nameVal.trim()
+
+    // 1. 若輸入包含中文，由 suggestions 或 detectedInfo 解析出精準英數代號
+    if (/[\u4e00-\u9fa5]/.test(raw)) {
+      if (suggestions.length > 0 && suggestions[0].symbol) {
+        targetSymbol = suggestions[0].symbol
+        if (!targetName) targetName = suggestions[0].name || raw
+      } else if (detectedInfo?.symbol && !/[\u4e00-\u9fa5]/.test(detectedInfo.symbol)) {
+        targetSymbol = detectedInfo.symbol
+        if (!targetName) targetName = detectedInfo.name || raw
+      } else {
+        setFeedback({ type: 'error', message: `查無「${raw}」對應之股票代號，請直接輸入代號（如 2330）` })
+        return
+      }
+    } else {
+      // 2. 純英數代號輸入
+      const clean = raw.toUpperCase().replace(/\s+/g, '')
+      if (isTW && /^\d{4,6}$/.test(clean)) {
+        const found = suggestions.find((s) => s.symbol === `${clean}.TWO` || s.symbol === `${clean}.TW`)
+        if (found) {
+          targetSymbol = found.symbol
+          if (!targetName) targetName = found.name
+        } else {
+          targetSymbol = `${clean}.TW`
+        }
+      } else {
+        targetSymbol = clean
+      }
+    }
+
+    await submitStock(targetSymbol, targetName)
   }
 
   return (
@@ -265,16 +285,18 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
                   />
                 </div>
 
-                {/* 搜尋下拉推薦標籤 (支援點選填入) */}
+                {/* 搜尋下拉推薦標籤 (點選直接一鍵加入) */}
                 {suggestions.length > 0 && inputVal.trim() && (
                   <div className="flex flex-wrap gap-1.5 pt-0.5">
                     {suggestions.slice(0, 3).map((item) => (
                       <button
                         key={item.symbol}
                         type="button"
-                        onClick={() => handleSelectSuggestion(item)}
-                        className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-[11px] text-white/80 flex items-center space-x-1.5 transition-colors"
+                        disabled={isSubmitting}
+                        onClick={() => submitStock(item.symbol, item.name)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] active:bg-white/[0.22] border border-white/[0.10] text-[11px] text-white/90 flex items-center space-x-1.5 transition-colors disabled:opacity-50 cursor-pointer"
                       >
+                        <Plus className="w-3 h-3 text-white/50" strokeWidth={2} />
                         <span className="font-semibold text-white/95">{item.name}</span>
                         <span className="text-white/40 font-mono">({item.symbol})</span>
                       </button>
@@ -282,14 +304,11 @@ function AddStockCard({ market, onAddStock, existingSymbols = [] }) {
                   </div>
                 )}
 
-                {/* 自動辨識提示膠囊 */}
-                {detectedInfo && !suggestions.some((s) => inputVal.includes(s.symbol)) && (
-                  <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs">
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.08] text-white/50">
-                      即將配對
-                    </span>
-                    <span className="font-semibold text-white/90">{detectedInfo.name}</span>
-                    <span className="text-white/45 font-mono text-[11px]">({detectedInfo.symbol})</span>
+                {/* 當無任何建議膠囊且輸入非空時，顯示簡潔直接新增確認提示 */}
+                {suggestions.length === 0 && inputVal.trim() && (
+                  <div className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.07] text-xs">
+                    <span className="text-white/40 text-[11px]">將直接新增：</span>
+                    <span className="font-mono font-medium text-white/80">{normalizedSymbol || inputVal.trim()}</span>
                   </div>
                 )}
 

@@ -59,18 +59,25 @@ export default function App() {
   // 檢視模式：自選個股 (STOCKS) 或 主要指數 (INDEX)
   const [cardViewMode, setCardViewMode] = useState('STOCKS')
 
-  // 監聽 Supabase 驗證狀態
+  // 監聽 Supabase 驗證狀態（保持完全同步，絕不 await 任何非同步呼叫）
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       setSession(currentSession)
+      setAuthLoading(false)
+    }).catch(() => {
       setAuthLoading(false)
     })
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+    } = supabase.auth.onAuthStateChange((event, currentSession) => {
       setSession(currentSession)
       setAuthLoading(false)
+      if (event === 'SIGNED_OUT') {
+        setReports([])
+        setLiveQuotes({})
+        setAuthSubmitting(false)
+      }
     })
 
     return () => subscription.unsubscribe()
@@ -78,6 +85,7 @@ export default function App() {
 
   // Google OAuth 登入
   const handleGoogleSignIn = async () => {
+    if (authSubmitting) return
     try {
       setAuthSubmitting(true)
       setAuthError('')
@@ -90,6 +98,7 @@ export default function App() {
       if (error) throw error
     } catch (err) {
       setAuthError(err.message || 'Google 登入失敗')
+    } finally {
       setAuthSubmitting(false)
     }
   }
@@ -97,6 +106,7 @@ export default function App() {
   // 快速暱稱匿名登入（具備永久獨立 auth.uid()）
   const handleAnonymousSignIn = async (e) => {
     e.preventDefault()
+    if (authSubmitting) return
     const trimmed = nicknameInput.trim()
     if (!trimmed) {
       setAuthError('請輸入您的暱稱')
@@ -115,16 +125,38 @@ export default function App() {
       if (error) throw error
     } catch (err) {
       setAuthError(err.message || '快速登入失敗')
+    } finally {
       setAuthSubmitting(false)
     }
   }
 
-  // 登出
+  // 加固登出流程：徹底清除計時器、畫面狀態與本地 session
   const handleSignOut = async () => {
+    // 1. 先清除本地輪詢與畫面狀態
+    pollCountRef.current = 0
+    pollTimedOutRef.current = false
+    setPollTimedOut(false)
+    setReports([])
+    setLiveQuotes({})
+    setErrorMsg('')
+    setLoading(false)
+    setRefreshing(false)
+    setAuthSubmitting(false)
+    setAuthError('')
+
+    // 2. 執行登出（加上 local scope 與 2 秒逾時保護）
     try {
-      await supabase.auth.signOut()
+      const signOutPromise = supabase.auth.signOut({ scope: 'local' })
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2000))
+      await Promise.race([signOutPromise, timeoutPromise])
     } catch (err) {
-      console.error('登出失敗:', err)
+      console.warn('Supabase signOut 略過:', err)
+    } finally {
+      // 確保本地狀態完全歸零
+      setSession(null)
+      setAuthLoading(false)
+      setAuthSubmitting(false)
+      setNicknameInput('')
     }
   }
 
@@ -422,22 +454,33 @@ export default function App() {
     setRefreshing(false)
   }
 
-  // 登入後初始加載
+  // 登入後初始加載：改由獨立監聽 session?.user?.id 來觸發，徹底消除 Supabase 非同步死鎖
+  const userId = session?.user?.id
   useEffect(() => {
-    if (!session) return
+    if (!userId) return
+    let isCancelled = false
     async function init() {
-      const latestDate = await loadAvailableDates('US')
-      await loadReports('US', latestDate)
+      try {
+        const latestDate = await loadAvailableDates('US')
+        if (!isCancelled) {
+          await loadReports('US', latestDate)
+        }
+      } catch (err) {
+        console.error('初始載入失敗:', err)
+      }
     }
     init()
-  }, [session, loadAvailableDates, loadReports])
+    return () => {
+      isCancelled = true
+    }
+  }, [userId, loadAvailableDates, loadReports])
 
   // 切換市場或報告載入後，靜默同步最新盤中行情
   useEffect(() => {
-    if (session?.user && reports.length > 0) {
+    if (userId && reports.length > 0) {
       fetchLiveQuotes(market, false)
     }
-  }, [market, session, reports.length > 0, fetchLiveQuotes])
+  }, [market, userId, reports.length > 0, fetchLiveQuotes])
 
   // PWA 從背景回到前景時（且距離上次大於 60 秒），背景靜默刷新盤中即時行情
   useEffect(() => {
@@ -522,19 +565,25 @@ export default function App() {
   const handleAddStock = useCallback(
     async ({ symbol, name, market: stockMarket }) => {
       if (!session?.user) return false
+      const cleanSym = (symbol || '').trim().toUpperCase()
+      if (!cleanSym || !/^[A-Z0-9.\-]{1,12}$/.test(cleanSym) || cleanSym.startsWith('^')) {
+        console.warn('拒絕新增無效標的代號:', symbol)
+        return false
+      }
       try {
+        const finalName = (name || cleanSym).trim()
         const { error } = await supabase.from('watchlist').insert([
           {
             user_id: session.user.id,
-            symbol,
-            name,
+            symbol: cleanSym,
+            name: finalName,
             market: stockMarket,
           },
         ])
 
         if (error) {
           if (error.code === '23505') {
-            throw new Error(`${symbol} 已在自選股清單中`)
+            throw new Error(`${cleanSym} 已在自選股清單中`)
           }
           throw error
         }
@@ -555,7 +604,7 @@ export default function App() {
 
         // 非同步背景觸發雲端函式（不阻塞輸入框，讓使用者可繼續連續新增下一檔）
         supabase.functions
-          .invoke('sync-stock', { body: { symbol, name, market: stockMarket } })
+          .invoke('sync-stock', { body: { symbol: cleanSym, name: finalName, market: stockMarket } })
           .then(() => loadReports(market, targetDate, true))
           .catch((err) => console.error('雲端同步呼叫失敗:', err))
 

@@ -94,21 +94,27 @@ jobs:
                 ;;
               "35 20 * * 1-5" | "35 21 * * 1-5")
                 NY_HOUR=$(TZ="America/New_York" date +%H)
-                echo "🇺🇸 檢查美股第一波盤後快報排程，目前美東時間小時為: $NY_HOUR 時"
-                if [ "$NY_HOUR" -eq 16 ]; then
+                NY_MIN=$(TZ="America/New_York" date +%M)
+                NY_TOTAL=$((10#$NY_HOUR * 60 + 10#$NY_MIN))
+                echo "🇺🇸 檢查美股第一波盤後快報排程，目前美東時間: $NY_HOUR:$NY_MIN ($NY_TOTAL 分鐘)"
+                # 第一波窗口：美東時間 16:30 ~ 17:29 (990 ~ 1049 分鐘)，容許 Actions 佇列延遲並防夏冬令重複觸發
+                if [ "$NY_TOTAL" -ge 990 ] && [ "$NY_TOTAL" -le 1049 ]; then
                   echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US --stage 1" >> $GITHUB_ENV
                 else
-                  echo "⏭️ 當前美東時間非 16:35 檢查點（夏冬令排程互補），安全略過本次觸發。"
+                  echo "⏭️ 當前美東時間非第一波有效窗口 (16:30~17:29)，安全略過本次觸發。"
                   echo "SKIP_RUN=true" >> $GITHUB_ENV
                 fi
                 ;;
               "30 22 * * 1-5" | "30 23 * * 1-5")
                 NY_HOUR=$(TZ="America/New_York" date +%H)
-                echo "🇺🇸 檢查美股第二波盤後完整版排程，目前美東時間小時為: $NY_HOUR 時"
-                if [ "$NY_HOUR" -eq 18 ]; then
+                NY_MIN=$(TZ="America/New_York" date +%M)
+                NY_TOTAL=$((10#$NY_HOUR * 60 + 10#$NY_MIN))
+                echo "🇺🇸 檢查美股第二波盤後完整版排程，目前美東時間: $NY_HOUR:$NY_MIN ($NY_TOTAL 分鐘)"
+                # 第二波窗口：美東時間 18:25 ~ 19:24 (1105 ~ 1164 分鐘)，容許 Actions 佇列延遲並防夏冬令重複觸發
+                if [ "$NY_TOTAL" -ge 1105 ] && [ "$NY_TOTAL" -le 1164 ]; then
                   echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US --stage 2" >> $GITHUB_ENV
                 else
-                  echo "⏭️ 當前美東時間非 18:30 檢查點（夏冬令排程互補），安全略過本次觸發。"
+                  echo "⏭️ 當前美東時間非第二波有效窗口 (18:25~19:24)，安全略過本次觸發。"
                   echo "SKIP_RUN=true" >> $GITHUB_ENV
                 fi
                 ;;

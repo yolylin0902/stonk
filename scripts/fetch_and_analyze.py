@@ -550,11 +550,12 @@ DEFAULT_MARKET_INDEXES: Dict[str, List[Dict[str, Any]]] = {
 
 
 def get_market_checkpoint(market: str) -> Dict[str, Any]:
-    """取得該市場當前時間所屬之兩段式 Checkpoint (Stage 1 或 Stage 2)。"""
+    """取得該市場當前時間所屬之兩段式 Checkpoint (Stage 1 或 Stage 2) 與目標交易日。"""
     tz_name = "Asia/Taipei" if market == "TW" else "America/New_York"
     now_local = datetime.now(ZoneInfo(tz_name))
     weekday = now_local.strftime("%a")
     minutes = now_local.hour * 60 + now_local.minute
+    today_str = now_local.strftime("%Y-%m-%d")
 
     cp1 = 14 * 60 + 5 if market == "TW" else 16 * 60 + 35
     cp2 = 17 * 60 + 15 if market == "TW" else 18 * 60 + 30
@@ -562,13 +563,23 @@ def get_market_checkpoint(market: str) -> Dict[str, Any]:
     stage = 1
     if weekday in ("Sat", "Sun"):
         stage = 2
+        is_trading_day_passed = False
     elif minutes >= cp2:
         stage = 2
+        is_trading_day_passed = True
     elif minutes >= cp1:
         stage = 1
+        is_trading_day_passed = True
     else:
         stage = 2
-    return {"stage": stage}
+        is_trading_day_passed = False
+
+    return {
+        "stage": stage,
+        "today_str": today_str,
+        "is_trading_day_passed": is_trading_day_passed,
+        "weekday": weekday,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -617,6 +628,21 @@ def main():
         logger.info(f"\n==========================================")
         logger.info(f"📊 開始處理市場：{m}（階段：Stage {current_stage} - {stage_title}）")
         logger.info(f"==========================================")
+
+        # ── 基準指數休市驗證：若今日已過開盤/收盤時間，但基準指數最新日期仍停在之前，判定休市並安全略過 ──
+        if checkpoint_info["is_trading_day_passed"] and checkpoint_info["weekday"] not in ("Sat", "Sun"):
+            benchmark_sym = "^TWII" if m == "TW" else "^GSPC"
+            logger.info(f"🔍 正在檢查市場 {m} 基準指數 ({benchmark_sym}) 最新行情日期以確認是否開市...")
+            bench_price = fetch_stock_price(benchmark_sym)
+            if bench_price:
+                bench_date = bench_price.get("report_date")
+                today_str = checkpoint_info["today_str"]
+                if bench_date and bench_date < today_str:
+                    logger.info(
+                        f"🛑 市場 {m} 今日 ({today_str}) 逢國定連假/颱風假休市（基準指數 {benchmark_sym} 最新行情停留於 {bench_date}）。"
+                    )
+                    logger.info(f"✅ 安全略過市場 {m} 之爬蟲與 AI 分析，保護 API 配額且不覆蓋既有報告。\n")
+                    continue
 
         # 1. 取得該市場的固定大盤指數（永遠獨立更新）
         market_indexes = DEFAULT_MARKET_INDEXES.get(m, [])

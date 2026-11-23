@@ -24,10 +24,24 @@ export const needsAiAnalysis = (headline) => {
   return false
 }
 
+// 輔助函式：從時間戳秒數取得市場當地 YYYY-MM-DD
+export const getTradingDateFromEpoch = (epochSec, targetMarket) => {
+  if (!epochSec || epochSec <= 0) return null
+  const tz = targetMarket === 'TW' ? 'Asia/Taipei' : 'America/New_York'
+  const d = new Date(epochSec * 1000)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d)
+}
+
 // 取得市場兩段式檢查點資訊與對齊日期
 // 台股（UTC+8 台灣時間）：第一波 14:05（盤後即時新聞與收盤定價）、第二波 17:15（納入三大法人籌碼與傍晚深度分析）
 // 美股（美東時間）：第一波 16:35（正規盤收盤與盤後快訊）、第二波 18:30（盤後交易與華爾街完整總結）
-export const getMarketCheckpointInfo = (targetMarket, now = new Date()) => {
+// benchmarkTradingDate: 基準指數（台股 ^TWII / 美股 ^GSPC）最新實際交易日，用以阻斷國定假日與臨時休市之誤判
+export const getMarketCheckpointInfo = (targetMarket, now = new Date(), benchmarkTradingDate = null) => {
   const tz = targetMarket === 'TW' ? 'Asia/Taipei' : 'America/New_York'
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
@@ -93,7 +107,14 @@ export const getMarketCheckpointInfo = (targetMarket, now = new Date()) => {
   const yStr = cpYear
   const mStr = String(cpMonth + 1).padStart(2, '0')
   const dStr = String(cpDay).padStart(2, '0')
-  const targetTradingDate = `${yStr}-${mStr}-${dStr}`
+  let targetTradingDate = `${yStr}-${mStr}-${dStr}`
+
+  // 基準指數休市阻斷校正：若已知基準指數最新撮合日（如週五），且日曆推算日大於該日期（代表今日休市/連假/颱風假）
+  // 自動將預期交易日鎖定在該最後交易日，並將 stage 設為 2 (以收盤完整版為準)
+  if (benchmarkTradingDate && targetTradingDate > benchmarkTradingDate) {
+    targetTradingDate = benchmarkTradingDate
+    stage = 2
+  }
 
   const getUtcTimestamp = (y, mo, da, h, mi, timeZone) => {
     const utcGuess = new Date(Date.UTC(y, mo, da, h, mi, 0))
@@ -121,19 +142,26 @@ export const getMarketCheckpointInfo = (targetMarket, now = new Date()) => {
 }
 
 // 取得特定市場在目前當地時間下，最近一次「應完成盤後新聞整理」的交易日期 (YYYY-MM-DD)
-export const getExpectedMarketDate = (targetMarket) => {
-  return getMarketCheckpointInfo(targetMarket).targetTradingDate
+export const getExpectedMarketDate = (targetMarket, benchmarkTradingDate = null) => {
+  return getMarketCheckpointInfo(targetMarket, new Date(), benchmarkTradingDate).targetTradingDate
 }
 
 // 判定既有報告是否過期：
 // 規則：找出當下時間點之前最近一個已通過的檢查點，只要報告所屬日期早於該交易日，
 // 或同一交易日內 updated_at 早於該檢查點時間戳，就判定新聞摘要過期並觸發重整覆蓋
-export const isReportStale = (report, targetMarket) => {
+// 若今日逢休市（日曆目標日 > 基準指數最新交易日），只要報告已對齊基準指數最後交易日即視為最新，絕不觸發過期
+export const isReportStale = (report, targetMarket, benchmarkTradingDate = null) => {
   if (!report) return true
-  const cpInfo = getMarketCheckpointInfo(targetMarket)
+  const cpInfo = getMarketCheckpointInfo(targetMarket, new Date(), benchmarkTradingDate)
+  // 1. 若報告日期早於最近一個檢查點對齊的交易日，必然過期
   if (!report.report_date || report.report_date < cpInfo.targetTradingDate) {
     return true
   }
+  // 2. 若推算日大於基準指數最新交易日（即今日休市），且報告日期已對齊基準指數最後交易日，視為最新
+  if (benchmarkTradingDate && report.report_date === benchmarkTradingDate) {
+    return false
+  }
+  // 3. 若為同一交易日，檢查更新時間戳 updated_at 是否早於最近檢查點
   const reportTime = new Date(report.updated_at || report.created_at || 0).getTime()
   if (reportTime < cpInfo.checkpointTimestamp) {
     return true
@@ -193,6 +221,8 @@ export default function App() {
   const lastFetchLiveQuotesRef = useRef(0)
   const isRefreshingRef = useRef(false)
   const lastAutoRefreshRef = useRef(0)
+  // 基準指數最新撮合日快取（TW: ^TWII, US: ^GSPC），用以精確判定休市日阻斷空轉
+  const benchmarkTradingDatesRef = useRef({ TW: null, US: null })
 
   // 判斷是否正在檢視該市場最新日期（歷史日期檢視下一律看收盤日報）
   const isViewingLatestDate = useMemo(() => {
@@ -337,7 +367,8 @@ export default function App() {
           [currentStock.name]
         )
 
-        const cpInfo = getMarketCheckpointInfo(currentStock.market || targetMarket)
+        const benchDate = benchmarkTradingDatesRef.current[currentStock.market || targetMarket]
+        const cpInfo = getMarketCheckpointInfo(currentStock.market || targetMarket, new Date(), benchDate)
 
         setTimeout(() => {
           supabase.functions
@@ -350,7 +381,12 @@ export default function App() {
                 stage: cpInfo.stage,
               },
             })
-            .then(() => {
+            .then((res) => {
+              // 若後端判定今日休市，安全終止重整，避免輪詢迴圈
+              if (res.data?.status === 'market_closed') {
+                console.info(`[Self-Heal] ${currentStock.symbol} 今日市場休市，略過重整`)
+                return
+              }
               loadReportsRef.current?.(targetMarket, targetDate, true)
             })
             .catch((err) => {
@@ -366,7 +402,7 @@ export default function App() {
     try {
       const { data, error } = await supabase
         .from('daily_reports')
-        .select('report_date, market')
+        .select('report_date, market, symbol')
         .order('report_date', { ascending: false })
 
       if (error) throw error
@@ -377,8 +413,23 @@ export default function App() {
         return ''
       }
 
-      // 取得該市場的唯一日期清單，並保證包含該市場最新應完成盤後整理的交易日期
-      const expectedDate = getExpectedMarketDate(currentMarket)
+      // 提取基準指數最新紀錄日期 (作為休市判定依據)
+      const benchmarkSym = currentMarket === 'TW' ? '^TWII' : '^GSPC'
+      const benchmarkRow = (data || []).find(
+        (r) => r.market === currentMarket && r.symbol === benchmarkSym
+      )
+      if (benchmarkRow?.report_date) {
+        if (
+          !benchmarkTradingDatesRef.current[currentMarket] ||
+          benchmarkRow.report_date > benchmarkTradingDatesRef.current[currentMarket]
+        ) {
+          benchmarkTradingDatesRef.current[currentMarket] = benchmarkRow.report_date
+        }
+      }
+
+      const benchDate = benchmarkTradingDatesRef.current[currentMarket]
+      // 取得該市場的唯一日期清單，若逢休市自動鎖定於最後實際交易日
+      const expectedDate = getExpectedMarketDate(currentMarket, benchDate)
       const rawMarketDates = (data || [])
         .filter((r) => r.market === currentMarket)
         .map((r) => r.report_date)
@@ -489,10 +540,23 @@ export default function App() {
         }
       }
 
+      // 提取基準指數最新交易日，用以校準休市日過期判斷
+      const benchmarkSym = targetMarket === 'TW' ? '^TWII' : '^GSPC'
+      const benchRow = (allData || []).find((r) => r.market === targetMarket && r.symbol === benchmarkSym)
+      if (benchRow?.report_date) {
+        if (
+          !benchmarkTradingDatesRef.current[targetMarket] ||
+          benchRow.report_date > benchmarkTradingDatesRef.current[targetMarket]
+        ) {
+          benchmarkTradingDatesRef.current[targetMarket] = benchRow.report_date
+        }
+      }
+      const currentBenchDate = benchmarkTradingDatesRef.current[targetMarket]
+
       const userStockReports = userWatchlist.map((w) => {
         const found = foundMap.get(w.symbol) || fallbackMap.get(w.symbol)
         if (found) {
-          const isStale = isLatestDate && isReportStale(found, targetMarket)
+          const isStale = isLatestDate && isReportStale(found, targetMarket, currentBenchDate)
           const isAiPending = Boolean(
             isLatestDate &&
             !pollTimedOutRef.current &&
@@ -581,7 +645,7 @@ export default function App() {
       // 自我修復（Self-Healing）：若有卡在「AI 新聞分析整理中」、英文新聞標題、或新聞摘要已過期之標的，背景非同步重新觸發 sync-stock mode: 'full'
       if (isLatestDate && sessionRef.current?.user) {
         const stuckStocks = userStockReports.filter(
-          (r) => needsAiAnalysis(r.headline) || isReportStale(r, targetMarket)
+          (r) => needsAiAnalysis(r.headline) || isReportStale(r, targetMarket, currentBenchDate)
         )
         if (stuckStocks.length > 0) {
           triggerSelfHeal(stuckStocks, targetMarket, targetDate)
@@ -685,6 +749,15 @@ export default function App() {
 
         if (data?.quotes) {
           setLiveQuotes((prev) => ({ ...prev, ...data.quotes }))
+          // 提取基準指數最新撮合日期並快取
+          const benchmarkSym = targetMarket === 'TW' ? '^TWII' : '^GSPC'
+          const benchQuote = data.quotes[benchmarkSym]
+          if (benchQuote?.market_time) {
+            const liveBenchDate = getTradingDateFromEpoch(benchQuote.market_time, targetMarket)
+            if (liveBenchDate) {
+              benchmarkTradingDatesRef.current[targetMarket] = liveBenchDate
+            }
+          }
         }
       } catch (err) {
         console.warn('背景更新盤中報價略過:', err)

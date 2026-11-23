@@ -127,6 +127,18 @@ function getMarketCheckpoint(market: string, now: Date = new Date()): MarketChec
   const checkpointTimestamp = getUtcTimestamp(cpYear, cpMonth, cpDay, cpHour, cpMinute, tz);
   return { targetTradingDate, stage, checkpointTimestamp };
 }
+
+function getTradingDateFromEpoch(epochSec: number, market: string): string {
+  const tz = market === "TW" ? "Asia/Taipei" : "America/New_York";
+  const d = new Date(epochSec * 1000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 async function fetchYahooPrice(symbol: string): Promise<PriceResult | null> {
   const userAgent =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -510,7 +522,7 @@ Deno.serve(async (req) => {
     // 3. 取得市場雙檢查點資訊 (第一波快報 vs 第二波籌碼/盤後完整版)
     const checkpoint = getMarketCheckpoint(market);
     const stage = (body as any).stage || checkpoint.stage;
-    const reportDate = checkpoint.targetTradingDate;
+    let reportDate = checkpoint.targetTradingDate;
 
     // 4. 抓取股價 (含 .TW -> .TWO 自動切換)
     let priceInfo = await fetchYahooPrice(symbol);
@@ -519,6 +531,64 @@ Deno.serve(async (req) => {
       priceInfo = await fetchYahooPrice(altSymbol);
       if (priceInfo) {
         symbol = altSymbol;
+      }
+    }
+
+    // 4.1 基準指數休市判定與標的最後成交日防呆
+    let stockTradingDate: string | null = null;
+    if (priceInfo && priceInfo.market_time && priceInfo.market_time > 0) {
+      stockTradingDate = getTradingDateFromEpoch(priceInfo.market_time, market);
+    }
+
+    const benchmarkSymbol = market === "TW" ? "^TWII" : "^GSPC";
+    let benchmarkTradingDate: string | null = null;
+    if (symbol === benchmarkSymbol) {
+      benchmarkTradingDate = stockTradingDate;
+    } else {
+      try {
+        const benchInfo = await fetchYahooPrice(benchmarkSymbol);
+        if (benchInfo?.market_time) {
+          benchmarkTradingDate = getTradingDateFromEpoch(benchInfo.market_time, market);
+        }
+      } catch (_) {}
+    }
+
+    // 若基準指數最新撮合日早於日曆目標日，確定今日休市（國定假日、連假、颱風假）
+    const isMarketClosedToday = Boolean(
+      benchmarkTradingDate && benchmarkTradingDate < checkpoint.targetTradingDate
+    );
+
+    // 若今日休市，將報告日期校正為基準指數之最後成交日，嚴禁使用休市日日期偽造日報
+    if (isMarketClosedToday && benchmarkTradingDate) {
+      reportDate = benchmarkTradingDate;
+    } else if (stockTradingDate && stockTradingDate < checkpoint.targetTradingDate) {
+      reportDate = stockTradingDate;
+    }
+
+    // 休市空轉保護：若今日休市且該標的在最後交易日已存在有效日報，直接終止執行，嚴禁寫入與呼叫 Gemini
+    if (isMarketClosedToday || (stockTradingDate && stockTradingDate < checkpoint.targetTradingDate)) {
+      const { data: existingReport } = await adminClient
+        .from("daily_reports")
+        .select("headline")
+        .eq("report_date", reportDate)
+        .eq("symbol", symbol)
+        .maybeSingle();
+
+      if (existingReport?.headline && !existingReport.headline.includes("整理中")) {
+        console.log(`[Market Closed Protection] 市場休市且 ${symbol} 於 ${reportDate} 已有完整日報，直接返回 market_closed`);
+        return new Response(
+          JSON.stringify({
+            status: "market_closed",
+            symbol,
+            market,
+            report_date: reportDate,
+            message: `市場休市或無新撮合（最後交易日：${reportDate}），既有日報已是最新，安全略過不重複寫入`,
+          }),
+          {
+            status: 200,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
     }
 

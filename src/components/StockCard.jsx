@@ -133,9 +133,37 @@ function StockCardContent({
         : `${numClose.toLocaleString('zh-TW', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`)
     : '--'
 
-  // 漲跌幅文字
+  // 計算漲跌價差（金額 / 點數）
+  // 優先使用原始傳入欄位（若有 change 或 prev_close），若無則由現價與漲跌幅反推昨收與價差
+  let changeDiffText = null
+  if (numClose != null && numChangePct != null) {
+    let diff = null
+    if (report?.change != null && Number.isFinite(Number(report.change))) {
+      diff = Number(report.change)
+    } else if (report?.prev_close != null && Number.isFinite(Number(report.prev_close)) && Number(report.prev_close) > 0) {
+      diff = numClose - Number(report.prev_close)
+    } else if (1 + numChangePct / 100 > 0) {
+      const impliedPrevClose = numClose / (1 + numChangePct / 100)
+      diff = numClose - impliedPrevClose
+    }
+
+    if (diff != null && Number.isFinite(diff)) {
+      const sign = diff > 0 ? '+' : (diff < 0 ? '-' : '')
+      const absDiff = Math.abs(diff)
+      const formattedDiff = absDiff >= 1000
+        ? absDiff.toLocaleString(isUS ? 'en-US' : 'zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : absDiff.toFixed(2)
+      changeDiffText = `${sign}${formattedDiff}`
+    }
+  }
+
+  // 漲跌幅文字與並列顯示 (例如: +12.50 (+1.25%) 或 -5.00 (-0.80%))
   const changePctText = numChangePct != null
     ? `${numChangePct > 0 ? '+' : ''}${numChangePct.toFixed(2)}%`
+    : '同步中'
+
+  const changeBadgeText = numChangePct != null
+    ? (changeDiffText ? `${changeDiffText} (${changePctText})` : changePctText)
     : '同步中'
 
   const sentimentCls = 'bg-white/[0.09] text-white/80 text-[11px] px-2.5 py-0.5 rounded-full font-medium'
@@ -214,14 +242,14 @@ function StockCardContent({
           </p>
         </div>
 
-        {/* 右側：股價 + 漲跌幅 + 箭頭指示 */}
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="flex flex-col items-end">
-            <span className={`text-[16px] font-semibold tabular-nums leading-tight ${trendTextColor}`}>
+        {/* 右側：股價 + 漲跌價差與漲跌幅 + 箭頭指示 */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-col items-end text-right">
+            <span className={`text-[15px] sm:text-[16px] font-semibold tabular-nums leading-tight ${trendTextColor}`}>
               {formattedPrice}
             </span>
-            <span className={`mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium tabular-nums ${trendCapsuleCls}`}>
-              {changePctText}
+            <span className={`mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium tabular-nums tracking-tight whitespace-nowrap ${trendCapsuleCls}`}>
+              {changeBadgeText}
             </span>
           </div>
           <ChevronDown

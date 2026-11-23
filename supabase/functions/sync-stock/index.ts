@@ -397,15 +397,60 @@ Deno.serve(async (req) => {
     // 2. 建立管理員 Client 負責寫入資料表
     const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 3. 對齊市場最新日期 (防呆)
-    const { data: latestDateData } = await adminClient
-      .from("daily_reports")
-      .select("report_date")
-      .eq("market", market)
-      .order("report_date", { ascending: false })
-      .limit(1);
+    // 3. 取得市場最新收盤或交易日期（防呆：結合時區與收盤時間，絕不落後於 Yahoo 行情日）
+    const getExpectedMarketTradingDate = (m: string, marketTime?: number): string => {
+      if (marketTime && marketTime > 0) {
+        const tz = m === "TW" ? "Asia/Taipei" : "America/New_York";
+        const d = new Date(marketTime * 1000);
+        const formatter = new Intl.DateTimeFormat("en-CA", {
+          timeZone: tz,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+        return formatter.format(d);
+      }
+      const tz = m === "TW" ? "Asia/Taipei" : "America/New_York";
+      const now = new Date();
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        weekday: "short",
+        hour12: false,
+      }).formatToParts(now);
 
-    const reportDate = latestDateData?.[0]?.report_date || new Date().toISOString().split("T")[0];
+      const getPart = (type: string) => parts.find((p) => p.type === type)?.value || "";
+      const year = parseInt(getPart("year"), 10);
+      const month = parseInt(getPart("month"), 10) - 1;
+      const day = parseInt(getPart("day"), 10);
+      const hour = parseInt(getPart("hour"), 10);
+      const minute = parseInt(getPart("minute"), 10);
+      const weekday = getPart("weekday");
+
+      const closeMinutes = m === "TW" ? 13 * 60 + 30 : 16 * 60;
+      const currentMinutes = hour * 60 + minute;
+
+      const target = new Date(Date.UTC(year, month, day));
+      const isWeekend = weekday === "Sat" || weekday === "Sun";
+      const isPastClose = currentMinutes >= closeMinutes;
+
+      if (isWeekend) {
+        const daysToSubtract = weekday === "Sat" ? 1 : 2;
+        target.setUTCDate(target.getUTCDate() - daysToSubtract);
+      } else if (!isPastClose) {
+        const daysToSubtract = weekday === "Mon" ? 3 : 1;
+        target.setUTCDate(target.getUTCDate() - daysToSubtract);
+      }
+
+      const y = target.getUTCFullYear();
+      const mo = String(target.getUTCMonth() + 1).padStart(2, "0");
+      const da = String(target.getUTCDate()).padStart(2, "0");
+      return `${y}-${mo}-${da}`;
+    };
 
     // 4. 抓取股價 (含 .TW -> .TWO 自動切換)
     let priceInfo = await fetchYahooPrice(symbol);
@@ -416,6 +461,20 @@ Deno.serve(async (req) => {
         symbol = altSymbol;
       }
     }
+
+    // 計算最新應對齊的報告日期：優先對齊該市場在 Yahoo 上的行情交易日
+    const expectedDate = getExpectedMarketTradingDate(market, priceInfo?.market_time);
+
+    // 查詢目前資料庫中最新日期以做為保底參考
+    const { data: latestDateData } = await adminClient
+      .from("daily_reports")
+      .select("report_date")
+      .eq("market", market)
+      .order("report_date", { ascending: false })
+      .limit(1);
+
+    const dbLatestDate = latestDateData?.[0]?.report_date;
+    const reportDate = dbLatestDate && dbLatestDate > expectedDate ? dbLatestDate : expectedDate;
 
     const isPlaceholder = (n?: string, sym?: string) => {
       if (!n || typeof n !== "string") return true;

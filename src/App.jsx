@@ -24,6 +24,59 @@ export const needsAiAnalysis = (headline) => {
   return false
 }
 
+// 取得特定市場在目前當地時間下，最近一次「應完成盤後新聞整理」的交易日期 (YYYY-MM-DD)
+// 台股：以 Asia/Taipei 時區計算，週一至週五 13:30 (收盤整理時間) 後為當日，收盤前或週末為前一交易日
+// 美股：以 America/New_York 時區計算，週一至週五 16:00 (收盤整理時間) 後為當日，收盤前或週末為前一交易日
+export const getExpectedMarketDate = (targetMarket) => {
+  const tz = targetMarket === 'TW' ? 'Asia/Taipei' : 'America/New_York'
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  }).formatToParts(now)
+
+  const getPart = (type) => parts.find((p) => p.type === type)?.value || ''
+  const year = parseInt(getPart('year'), 10)
+  const month = parseInt(getPart('month'), 10) - 1
+  const day = parseInt(getPart('day'), 10)
+  const hour = parseInt(getPart('hour'), 10)
+  const minute = parseInt(getPart('minute'), 10)
+  const weekday = getPart('weekday')
+
+  const closeMinutes = targetMarket === 'TW' ? 13 * 60 + 30 : 16 * 60
+  const currentMinutes = hour * 60 + minute
+
+  const target = new Date(Date.UTC(year, month, day))
+  const isWeekend = weekday === 'Sat' || weekday === 'Sun'
+  const isPastClose = currentMinutes >= closeMinutes
+
+  if (isWeekend) {
+    const daysToSubtract = weekday === 'Sat' ? 1 : 2
+    target.setUTCDate(target.getUTCDate() - daysToSubtract)
+  } else if (!isPastClose) {
+    const daysToSubtract = weekday === 'Mon' ? 3 : 1
+    target.setUTCDate(target.getUTCDate() - daysToSubtract)
+  }
+
+  const y = target.getUTCFullYear()
+  const mo = String(target.getUTCMonth() + 1).padStart(2, '0')
+  const da = String(target.getUTCDate()).padStart(2, '0')
+  return `${y}-${mo}-${da}`
+}
+
+// 判定既有報告是否過期（若報告所屬日期早於該市場最新收盤交易日，判定新聞摘要過期需要重新整理）
+export const isReportStale = (report, targetMarket) => {
+  if (!report || !report.report_date) return true
+  const expectedDate = getExpectedMarketDate(targetMarket)
+  return report.report_date < expectedDate
+}
+
 // 判斷是否為真正的官方純大盤指數（嚴格只認 ^ 開頭，例如美股 ^GSPC, ^IXIC, ^DJI, ^SOX；台股 ^TWII）
 // 所有 ETF（例如 QQQ, SOXX, SPY, 0050.TW 等）皆歸類在一般自選個股區，不列入指數區
 export const isMarketIndex = (symbol) => {
@@ -257,14 +310,15 @@ export default function App() {
         return ''
       }
 
-      // 取得該市場的唯一日期清單
+      // 取得該市場的唯一日期清單，並保證包含該市場最新應完成盤後整理的交易日期
+      const expectedDate = getExpectedMarketDate(currentMarket)
+      const rawMarketDates = (data || [])
+        .filter((r) => r.market === currentMarket)
+        .map((r) => r.report_date)
+
       const marketDates = Array.from(
-        new Set(
-          data
-            .filter((r) => r.market === currentMarket)
-            .map((r) => r.report_date)
-        )
-      )
+        new Set([expectedDate, ...rawMarketDates].filter(Boolean))
+      ).sort().reverse()
 
       setAvailableDates(marketDates)
 
@@ -371,10 +425,11 @@ export default function App() {
       const userStockReports = userWatchlist.map((w) => {
         const found = foundMap.get(w.symbol) || fallbackMap.get(w.symbol)
         if (found) {
+          const isStale = isLatestDate && isReportStale(found, targetMarket)
           const isAiPending = Boolean(
             isLatestDate &&
             !pollTimedOutRef.current &&
-            needsAiAnalysis(found.headline)
+            (needsAiAnalysis(found.headline) || isStale)
           )
           const resolvedName = resolveDisplayName(
             w.symbol,
@@ -456,10 +511,10 @@ export default function App() {
       )
       const sortedUserStocks = [...pendingList, ...readyList]
 
-      // 自我修復（Self-Healing）：若有卡在「AI 新聞分析整理中」或英文新聞標題之標的，背景非同步重新觸發 sync-stock mode: 'full'
+      // 自我修復（Self-Healing）：若有卡在「AI 新聞分析整理中」、英文新聞標題、或新聞摘要已過期之標的，背景非同步重新觸發 sync-stock mode: 'full'
       if (isLatestDate && sessionRef.current?.user) {
         const stuckStocks = userStockReports.filter(
-          (r) => needsAiAnalysis(r.headline)
+          (r) => needsAiAnalysis(r.headline) || isReportStale(r, targetMarket)
         )
         if (stuckStocks.length > 0) {
           triggerSelfHeal(stuckStocks, targetMarket, targetDate)

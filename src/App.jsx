@@ -56,6 +56,10 @@ export default function App() {
   const pollCountRef = useRef(0)
   const pollTimedOutRef = useRef(false)
   const [pollTimedOut, setPollTimedOut] = useState(false)
+  const marketRef = useRef(market)
+  marketRef.current = market
+  const selectedDateRef = useRef(selectedDate)
+  selectedDateRef.current = selectedDate
   const availableDatesRef = useRef([])
   availableDatesRef.current = availableDates
   const reportsRef = useRef([])
@@ -70,6 +74,8 @@ export default function App() {
   // 盤中即時報價獨立暫存狀態（純記憶體疊加，不覆蓋資料庫收盤日報）
   const [liveQuotes, setLiveQuotes] = useState({})
   const lastFetchLiveQuotesRef = useRef(0)
+  const isRefreshingRef = useRef(false)
+  const lastAutoRefreshRef = useRef(0)
 
   // 判斷是否正在檢視該市場最新日期（歷史日期檢視下一律看收盤日報）
   const isViewingLatestDate = useMemo(() => {
@@ -495,7 +501,6 @@ export default function App() {
       if (!isSilent) {
         setLoading(false)
       }
-      setRefreshing(false)
     }
   }, [])
 
@@ -506,14 +511,17 @@ export default function App() {
     const dir = newMarket === 'TW' ? 1 : -1
     setMarketDirection(dir)
     setMarket(newMarket)
+    marketRef.current = newMarket
     const latestDate = await loadAvailableDates(newMarket)
     await loadReports(newMarket, latestDate)
+    triggerRefresh(newMarket, true)
   }
 
   // 日期切換處理
   const handleDateChange = async (newDate) => {
     setExpandedSymbols(new Set())
     setSelectedDate(newDate)
+    selectedDateRef.current = newDate
     await loadReports(market, newDate)
   }
 
@@ -563,32 +571,60 @@ export default function App() {
     [session]
   )
 
-  // 手動重新整理（同時刷新收盤日報與盤中即時行情）
-  const handleRefresh = async () => {
+  // 觸發重新整理（同時刷新收盤日報與盤中即時行情，支援自訂市場與靜默/冷卻控制）
+  const triggerRefresh = useCallback(async (targetMarket, force = false) => {
+    if (isRefreshingRef.current) return
+    const now = Date.now()
+    if (!force && now - lastAutoRefreshRef.current < 60000) {
+      return // 60 秒冷卻防重複觸發
+    }
+    lastAutoRefreshRef.current = now
+    isRefreshingRef.current = true
     setRefreshing(true)
-    pollCountRef.current = 0
-    pollTimedOutRef.current = false
-    setPollTimedOut(false)
-    lastSelfHealRef.current.clear()
-    const latestDate = await loadAvailableDates(market)
-    const targetDate = selectedDate || latestDate
-    await Promise.allSettled([
-      loadReports(market, targetDate, true),
-      fetchLiveQuotes(market, true),
-    ])
-    setRefreshing(false)
-  }
+
+    try {
+      const curMarket = targetMarket || marketRef.current || 'US'
+      pollCountRef.current = 0
+      pollTimedOutRef.current = false
+      setPollTimedOut(false)
+      lastSelfHealRef.current.clear()
+
+      const latestDate = await loadAvailableDates(curMarket)
+      const targetDate = selectedDateRef.current || latestDate
+
+      await Promise.allSettled([
+        loadReports(curMarket, targetDate, true),
+        fetchLiveQuotes(curMarket, true),
+      ])
+    } catch (err) {
+      console.warn('重新整理或背景同步異常:', err)
+    } finally {
+      isRefreshingRef.current = false
+      setRefreshing(false)
+    }
+  }, [loadAvailableDates, loadReports, fetchLiveQuotes])
+
+  // 手動點擊重新整理按鈕（強制忽略冷卻時間）
+  const handleRefresh = useCallback(() => {
+    return triggerRefresh(marketRef.current, true)
+  }, [triggerRefresh])
 
   // 登入後初始加載：改由獨立監聽 session?.user?.id 來觸發，徹底消除 Supabase 非同步死鎖
+  // 先呈現資料庫快取，完成後在背景自動觸發即時報價更新
   const userId = session?.user?.id
   useEffect(() => {
     if (!userId) return
     let isCancelled = false
     async function init() {
       try {
-        const latestDate = await loadAvailableDates('US')
+        const curMarket = marketRef.current || 'US'
+        const latestDate = await loadAvailableDates(curMarket)
         if (!isCancelled) {
-          await loadReports('US', latestDate)
+          await loadReports(curMarket, latestDate)
+          if (!isCancelled) {
+            // 資料庫報告與自選股呈現後，立即在背景觸發最新報價與市場日報同步
+            triggerRefresh(curMarket, true)
+          }
         }
       } catch (err) {
         console.error('初始載入失敗:', err)
@@ -598,30 +634,26 @@ export default function App() {
     return () => {
       isCancelled = true
     }
-  }, [userId, loadAvailableDates, loadReports])
+  }, [userId, loadAvailableDates, loadReports, triggerRefresh])
 
-  // 切換市場或報告載入後，靜默同步最新盤中行情
+  // 監聽 visibilitychange（從手機背景切回）與 focus 事件：60 秒冷卻自動背景更新最新即時報價
   useEffect(() => {
-    if (userId && reports.length > 0) {
-      fetchLiveQuotes(market, false)
-    }
-  }, [market, userId, reports.length > 0, fetchLiveQuotes])
+    if (!userId) return
 
-  // PWA 從背景回到前景時（且距離上次大於 60 秒），背景靜默刷新盤中即時行情
-  useEffect(() => {
-    const handleVisibilityChange = () => {
+    const handleAutoSync = () => {
       if (document.visibilityState === 'visible') {
-        const now = Date.now()
-        if (now - lastFetchLiveQuotesRef.current > 60000) {
-          fetchLiveQuotes(market, true)
-        }
+        const curMarket = marketRef.current || 'US'
+        triggerRefresh(curMarket, false)
       }
     }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    document.addEventListener('visibilitychange', handleAutoSync)
+    window.addEventListener('focus', handleAutoSync)
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      document.removeEventListener('visibilitychange', handleAutoSync)
+      window.removeEventListener('focus', handleAutoSync)
     }
-  }, [market, fetchLiveQuotes])
+  }, [userId, triggerRefresh])
 
   // 同步 loadReports 參照給自癒背景任務使用
   useEffect(() => {

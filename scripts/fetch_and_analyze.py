@@ -30,9 +30,10 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 # 載入環境變數
 from dotenv import load_dotenv
@@ -394,9 +395,11 @@ def analyze_stock_story(
     news_list: List[Dict[str, str]],
     api_key: str,
     model_name: str,
+    stage: int = 1,
 ) -> Dict[str, Any]:
     """
     使用 google-genai 呼叫 Gemini 模型，輸出嚴格 JSON 格式的情緒標籤、核心一句話與 3 點重點。
+    支援兩段式檢查點 (Stage 1: 盤後快報 / Stage 2: 籌碼與盤後完整版)。
     """
     if genai is None or types is None:
         raise RuntimeError("未安裝 google-genai 套件，請執行 pip install google-genai")
@@ -406,6 +409,20 @@ def analyze_stock_story(
     news_context = "\n".join([f"- {n['title']}" for n in news_list]) if news_list else "無近期新聞"
     trend_str = f"上漲 {change_percent}%" if change_percent > 0 else (f"下跌 {abs(change_percent)}%" if change_percent < 0 else "平盤 0.0%")
 
+    stage_instruction = (
+        ("【重點加強】目前為台股盤後完整版時段（17:15後），請在第二點重點特別優先整合理論或新聞中提及之外資/投信三大法人籌碼動向、主力買賣超與盤後鉅額定價交易反應。" if market == "TW"
+         else "【重點加強】目前為美股盤後完整版時段（18:30後），請在第二點重點特別優先整合理論或新聞中提及之盤後交易表現（After-hours）、重磅財報開獎反應與華爾街機構最新評級。")
+        if stage == 2
+        else ("目前為台股盤後第一波即時快報（14:05），請聚焦收盤定價、焦點新聞事件與今日大盤情緒。" if market == "TW"
+              else "目前為美股盤後第一波即時快報（16:35），請聚焦常規盤收盤行情與初步市場快訊。")
+    )
+
+    bullet_2_guide = (
+        "三大法人籌碼買賣超、主力進出與關鍵支撐壓力。" if (stage == 2 and market == "TW")
+        else ("盤後交易波動、重大財報公布與華爾街機構觀點。" if (stage == 2 and market == "US")
+              else "技術面、評價面或法人資金動向。")
+    )
+
     prompt = f"""你是一位資深全球財經與股票市場分析師。請根據以下股票收盤資訊與相關最新新聞，歸納出今天的收盤重點故事。
 
 【股票資訊】
@@ -414,6 +431,7 @@ def analyze_stock_story(
 - 市場：{market}
 - 最新收盤價：{close_price}
 - 當日漲跌幅：{trend_str} ({change_percent}%)
+- 分析階段要求：{stage_instruction}
 
 【最新相關新聞標題】
 {news_context}
@@ -422,7 +440,10 @@ def analyze_stock_story(
 請以繁體中文（台灣習慣用語）輸出嚴格的 JSON 格式，包含以下三個欄位：
 1. "sentiment": 僅限填入 "利多"、"利空" 或 "中性" 之一。
 2. "headline": 25 字以內的一句話核心原因，直指今日股價走勢最關鍵催化劑（切勿廢話或長篇大論）。
-3. "story_bullets": 剛好 3 點繁體中文重點列表，每點一句話，3 點總字數嚴格控制在 120 字以內，總結驅動因素、市場氛圍或後續關注點。
+3. "story_bullets": 剛好 3 點繁體中文重點列表，每點一句話，3 點總字數嚴格控制在 120 字以內，依序總結：
+   - 核心驅動事件、產業趨勢或大盤氛圍。
+   - {bullet_2_guide}
+   - 後續應留意的觀察關鍵指標。
 
 請直接回傳合法的 JSON 字串，不要包含任何開頭結尾的 markdown 語法或額外文字。
 JSON 格式範例：
@@ -528,6 +549,28 @@ DEFAULT_MARKET_INDEXES: Dict[str, List[Dict[str, Any]]] = {
 }
 
 
+def get_market_checkpoint(market: str) -> Dict[str, Any]:
+    """取得該市場當前時間所屬之兩段式 Checkpoint (Stage 1 或 Stage 2)。"""
+    tz_name = "Asia/Taipei" if market == "TW" else "America/New_York"
+    now_local = datetime.now(ZoneInfo(tz_name))
+    weekday = now_local.strftime("%a")
+    minutes = now_local.hour * 60 + now_local.minute
+
+    cp1 = 14 * 60 + 5 if market == "TW" else 16 * 60 + 35
+    cp2 = 17 * 60 + 15 if market == "TW" else 18 * 60 + 30
+
+    stage = 1
+    if weekday in ("Sat", "Sun"):
+        stage = 2
+    elif minutes >= cp2:
+        stage = 2
+    elif minutes >= cp1:
+        stage = 1
+    else:
+        stage = 2
+    return {"stage": stage}
+
+
 # ----------------------------------------------------------------------
 # 主執行流程
 # ----------------------------------------------------------------------
@@ -539,6 +582,13 @@ def main():
         choices=["US", "TW"],
         default=None,
         help="指定執行市場：US (美股) 或 TW (台股)。若不指定則兩個市場皆執行。",
+    )
+    parser.add_argument(
+        "--stage",
+        type=int,
+        choices=[1, 2],
+        default=None,
+        help="指定分析階段：1 (盤後即時快報) 或 2 (籌碼/盤後完整版)。若未指定則依市場時間自動判斷。",
     )
     parser.add_argument(
         "--limit",
@@ -560,8 +610,12 @@ def main():
     total_succeeded = 0
 
     for m in markets_to_run:
+        checkpoint_info = get_market_checkpoint(m)
+        current_stage = args.stage or checkpoint_info["stage"]
+        stage_title = "第一波盤後快報" if current_stage == 1 else "第二波籌碼/盤後完整版"
+
         logger.info(f"\n==========================================")
-        logger.info(f"📊 開始處理市場：{m}")
+        logger.info(f"📊 開始處理市場：{m}（階段：Stage {current_stage} - {stage_title}）")
         logger.info(f"==========================================")
 
         # 1. 取得該市場的固定大盤指數（永遠獨立更新）
@@ -626,6 +680,7 @@ def main():
                             "若為無效標的，可點擊卡片右上角按鈕將其自自選移除。"
                         ],
                         "news_links": [],
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
                     upsert_daily_report(supabase_client, fallback_record)
                     continue
@@ -670,7 +725,7 @@ def main():
 
                 if news_items:
                     try:
-                        logger.info(f"🤖 正在呼叫 Gemini 模型 ({configs['gemini_model']}) 進行 AI 漲跌故事分析...")
+                        logger.info(f"🤖 正在呼叫 Gemini 模型 ({configs['gemini_model']}) 進行 AI 漲跌故事分析（Stage {current_stage}）...")
                         ai_analysis = analyze_stock_story(
                             symbol=symbol,
                             name=name,
@@ -680,6 +735,7 @@ def main():
                             news_list=news_items,
                             api_key=configs["gemini_api_key"],
                             model_name=configs["gemini_model"],
+                            stage=current_stage,
                         )
                         sentiment = ai_analysis.get("sentiment", "中性")
                         headline = ai_analysis.get("headline", "")
@@ -714,6 +770,7 @@ def main():
                     "headline": headline,
                     "story_bullets": story_bullets,
                     "news_links": news_items,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
 
                 success = upsert_daily_report(supabase_client, report_record)

@@ -26,7 +26,107 @@ interface PriceResult {
   shortName?: string;
 }
 
-// 輔助函式：從 Yahoo Finance 抓取即時報價與市場狀態（支援 query2 與 query1）
+// 輔助函式：取得市場兩段式檢查點資訊與對齊日期
+interface MarketCheckpoint {
+  targetTradingDate: string;
+  stage: number; // 1: 盤後快訊 (台股 14:05 / 美股 16:35), 2: 完整版 (台股 17:15 / 美股 18:30)
+  checkpointTimestamp: number;
+}
+
+function getMarketCheckpoint(market: string, now: Date = new Date()): MarketCheckpoint {
+  const tz = market === "TW" ? "Asia/Taipei" : "America/New_York";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(now);
+
+  const getPart = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  const year = parseInt(getPart("year"), 10);
+  const month = parseInt(getPart("month"), 10) - 1;
+  const day = parseInt(getPart("day"), 10);
+  const hour = parseInt(getPart("hour"), 10);
+  const minute = parseInt(getPart("minute"), 10);
+  const weekday = getPart("weekday");
+
+  const currentMinutes = hour * 60 + minute;
+  // 台股 Checkpoints: CP1 14:05 (845m), CP2 17:15 (1035m)
+  // 美股 Checkpoints: CP1 16:35 (995m), CP2 18:30 (1110m)
+  const cp1 = market === "TW" ? 14 * 60 + 5 : 16 * 60 + 35;
+  const cp2 = market === "TW" ? 17 * 60 + 15 : 18 * 60 + 30;
+
+  let cpYear = year, cpMonth = month, cpDay = day, cpHour = 0, cpMinute = 0;
+  let stage = 0;
+
+  const isWeekend = weekday === "Sat" || weekday === "Sun";
+  if (isWeekend) {
+    const daysToSubtract = weekday === "Sat" ? 1 : 2;
+    const fridayDate = new Date(Date.UTC(year, month, day));
+    fridayDate.setUTCDate(fridayDate.getUTCDate() - daysToSubtract);
+
+    cpYear = fridayDate.getUTCFullYear();
+    cpMonth = fridayDate.getUTCMonth();
+    cpDay = fridayDate.getUTCDate();
+    cpHour = Math.floor(cp2 / 60);
+    cpMinute = cp2 % 60;
+    stage = 2;
+  } else {
+    if (currentMinutes >= cp2) {
+      cpHour = Math.floor(cp2 / 60);
+      cpMinute = cp2 % 60;
+      stage = 2;
+    } else if (currentMinutes >= cp1) {
+      cpHour = Math.floor(cp1 / 60);
+      cpMinute = cp1 % 60;
+      stage = 1;
+    } else {
+      const prevTradingDate = new Date(Date.UTC(year, month, day));
+      const daysToSubtract = weekday === "Mon" ? 3 : 1;
+      prevTradingDate.setUTCDate(prevTradingDate.getUTCDate() - daysToSubtract);
+
+      cpYear = prevTradingDate.getUTCFullYear();
+      cpMonth = prevTradingDate.getUTCMonth();
+      cpDay = prevTradingDate.getUTCDate();
+      cpHour = Math.floor(cp2 / 60);
+      cpMinute = cp2 % 60;
+      stage = 2;
+    }
+  }
+
+  const yStr = cpYear;
+  const mStr = String(cpMonth + 1).padStart(2, "0");
+  const dStr = String(cpDay).padStart(2, "0");
+  const targetTradingDate = `${yStr}-${mStr}-${dStr}`;
+
+  const getUtcTimestamp = (y: number, mo: number, da: number, h: number, mi: number, timeZone: string) => {
+    const utcGuess = new Date(Date.UTC(y, mo, da, h, mi, 0));
+    const invParts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric", month: "numeric", day: "numeric",
+      hour: "numeric", minute: "numeric", second: "numeric",
+      hour12: false,
+    }).formatToParts(utcGuess);
+    const getP = (t: string) => invParts.find((p) => p.type === t)?.value || "0";
+    const asLocal = new Date(Date.UTC(
+      parseInt(getP("year"), 10),
+      parseInt(getP("month"), 10) - 1,
+      parseInt(getP("day"), 10),
+      parseInt(getP("hour"), 10),
+      parseInt(getP("minute"), 10),
+      parseInt(getP("second"), 10)
+    ));
+    const offset = asLocal.getTime() - utcGuess.getTime();
+    return utcGuess.getTime() - offset;
+  };
+
+  const checkpointTimestamp = getUtcTimestamp(cpYear, cpMonth, cpDay, cpHour, cpMinute, tz);
+  return { targetTradingDate, stage, checkpointTimestamp };
+}
 async function fetchYahooPrice(symbol: string): Promise<PriceResult | null> {
   const userAgent =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -177,7 +277,8 @@ async function analyzeWithGemini(
   closePrice: number,
   changePercent: number,
   newsItems: Array<{ title: string; link: string }>,
-  apiKey: string
+  apiKey: string,
+  stage: number = 1
 ): Promise<AnalysisResult | null> {
   if (!apiKey) {
     console.warn("analyzeWithGemini: No GEMINI_API_KEY provided");
@@ -189,12 +290,21 @@ async function analyzeWithGemini(
     ? `上漲 ${changePercent}%`
     : (changePercent < 0 ? `下跌 ${Math.abs(changePercent)}%` : "持平 0.0%");
 
+  const stageInstruction = stage === 2
+    ? (market === "TW"
+        ? "【重點加強】目前為台股盤後完整版時段（17:15後），請在第二點特別優先整合理論或新聞中提及之外資/投信三大法人籌碼動向、主力買賣超與盤後鉅額定價交易反應。"
+        : "【重點加強】目前為美股盤後完整版時段（18:30後），請在第二點特別優先整合理論或新聞中提及之盤後交易表現（After-hours）、重磅財報開獎反應與華爾街機構最新評級。")
+    : (market === "TW"
+        ? "目前為台股盤後第一波即時快報（14:05），請聚焦收盤定價、焦點新聞事件與今日大盤情緒。"
+        : "目前為美股盤後第一波即時快報（16:35），請聚焦常規盤收盤行情與初步市場快訊。");
+
   const prompt = `你是一位專業且客觀的股市分析師。請針對以下股票最新交易日行情與焦點新聞，進行精簡扼要的盤後焦點分析。
 股票代號：${symbol}
 原始名稱：${name}
 所屬市場：${market === "TW" ? "台股" : "美股"}
 最新收盤價：${closePrice}
 最新漲跌幅：${trend}
+分析階段要求：${stageInstruction}
 
 相關最新新聞：
 ${newsSummary || "（目前查無最新即時新聞，請根據該股所屬產業地位、市場大盤整體氛圍與今日漲跌幅客觀綜述）"}
@@ -205,7 +315,7 @@ ${newsSummary || "（目前查無最新即時新聞，請根據該股所屬產�
 3. "headline": 20 字以內的繁體中文精闢總結 headline（說明今日漲跌或市場核心主因；無論新聞為何種語言，一律以道地繁體中文呈現，嚴禁殘留任何英文標題或英文句子）。
 4. "story_bullets": 2 到 3 點繁體中文重點條列（陣列字串），每點 30~50 字，依序說明：
    - 核心驅動事件、產業趨勢或大盤氛圍。
-   - 技術面、評價面或法人資金動向。
+   - ${stage === 2 && market === "TW" ? "三大法人籌碼買賣超、主力進出與關鍵支撐壓力。" : (stage === 2 && market === "US" ? "盤後交易波動、重大財報公布與華爾街機構觀點。" : "技術面、評價面或法人資金動向。")}
    - 後續應留意的觀察關鍵指標。
    （特別注意：若輸入之新聞為英文，務必完整翻譯並精準編譯為客觀繁體中文重點，絕對不可出現未翻譯之英文句子或英文標籤）。
 5. 嚴格禁止使用任何 Emoji 表情符號（如 📈、📉、🚀、⚠️、🔥 等）。
@@ -397,60 +507,10 @@ Deno.serve(async (req) => {
     // 2. 建立管理員 Client 負責寫入資料表
     const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 3. 取得市場最新收盤或交易日期（防呆：結合時區與收盤時間，絕不落後於 Yahoo 行情日）
-    const getExpectedMarketTradingDate = (m: string, marketTime?: number): string => {
-      if (marketTime && marketTime > 0) {
-        const tz = m === "TW" ? "Asia/Taipei" : "America/New_York";
-        const d = new Date(marketTime * 1000);
-        const formatter = new Intl.DateTimeFormat("en-CA", {
-          timeZone: tz,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        });
-        return formatter.format(d);
-      }
-      const tz = m === "TW" ? "Asia/Taipei" : "America/New_York";
-      const now = new Date();
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        year: "numeric",
-        month: "numeric",
-        day: "numeric",
-        hour: "numeric",
-        minute: "numeric",
-        weekday: "short",
-        hour12: false,
-      }).formatToParts(now);
-
-      const getPart = (type: string) => parts.find((p) => p.type === type)?.value || "";
-      const year = parseInt(getPart("year"), 10);
-      const month = parseInt(getPart("month"), 10) - 1;
-      const day = parseInt(getPart("day"), 10);
-      const hour = parseInt(getPart("hour"), 10);
-      const minute = parseInt(getPart("minute"), 10);
-      const weekday = getPart("weekday");
-
-      const closeMinutes = m === "TW" ? 13 * 60 + 30 : 16 * 60;
-      const currentMinutes = hour * 60 + minute;
-
-      const target = new Date(Date.UTC(year, month, day));
-      const isWeekend = weekday === "Sat" || weekday === "Sun";
-      const isPastClose = currentMinutes >= closeMinutes;
-
-      if (isWeekend) {
-        const daysToSubtract = weekday === "Sat" ? 1 : 2;
-        target.setUTCDate(target.getUTCDate() - daysToSubtract);
-      } else if (!isPastClose) {
-        const daysToSubtract = weekday === "Mon" ? 3 : 1;
-        target.setUTCDate(target.getUTCDate() - daysToSubtract);
-      }
-
-      const y = target.getUTCFullYear();
-      const mo = String(target.getUTCMonth() + 1).padStart(2, "0");
-      const da = String(target.getUTCDate()).padStart(2, "0");
-      return `${y}-${mo}-${da}`;
-    };
+    // 3. 取得市場雙檢查點資訊 (第一波快報 vs 第二波籌碼/盤後完整版)
+    const checkpoint = getMarketCheckpoint(market);
+    const stage = (body as any).stage || checkpoint.stage;
+    const reportDate = checkpoint.targetTradingDate;
 
     // 4. 抓取股價 (含 .TW -> .TWO 自動切換)
     let priceInfo = await fetchYahooPrice(symbol);
@@ -461,20 +521,6 @@ Deno.serve(async (req) => {
         symbol = altSymbol;
       }
     }
-
-    // 計算最新應對齊的報告日期：優先對齊該市場在 Yahoo 上的行情交易日
-    const expectedDate = getExpectedMarketTradingDate(market, priceInfo?.market_time);
-
-    // 查詢目前資料庫中最新日期以做為保底參考
-    const { data: latestDateData } = await adminClient
-      .from("daily_reports")
-      .select("report_date")
-      .eq("market", market)
-      .order("report_date", { ascending: false })
-      .limit(1);
-
-    const dbLatestDate = latestDateData?.[0]?.report_date;
-    const reportDate = dbLatestDate && dbLatestDate > expectedDate ? dbLatestDate : expectedDate;
 
     const isPlaceholder = (n?: string, sym?: string) => {
       if (!n || typeof n !== "string") return true;
@@ -521,6 +567,7 @@ Deno.serve(async (req) => {
           "若為無效標的，可點擊卡片右上角按鈕將其自自選移除。",
         ],
         news_links: [],
+        updated_at: new Date().toISOString(),
       };
       await adminClient.from("daily_reports").upsert(fallbackRecord, { onConflict: "report_date,symbol" });
       return new Response(JSON.stringify({ status: "not_found", symbol, report_date: reportDate }), {
@@ -552,6 +599,7 @@ Deno.serve(async (req) => {
         "系統正同步擷取關鍵市場新聞並交由 AI 產生深度盤後重點...",
       ],
       news_links: [],
+      updated_at: new Date().toISOString(),
     };
     await adminClient.from("daily_reports").upsert(phase1Record, { onConflict: "report_date,symbol" });
 
@@ -568,7 +616,8 @@ Deno.serve(async (req) => {
           priceInfo.price,
           priceInfo.change_percent,
           newsItems,
-          geminiApiKey
+          geminiApiKey,
+          stage
         );
       } catch (geminiErr) {
         console.error("Gemini 分析過程異常:", geminiErr);
@@ -578,6 +627,7 @@ Deno.serve(async (req) => {
     }
 
     // 關鍵保底：若 AI 成功則寫入 AI 結果；若 AI 未回傳則產生全繁體中文行情保底，絕不輸出未翻譯的英文新聞標題
+    const completedAt = new Date().toISOString();
     if (aiResult) {
       // 若 AI 提供繁體中文標準名稱，且目前名稱為代號或純英文，主動升級為中文友善名稱
       if (aiResult.chinese_name && (name === symbol || !/[\u4e00-\u9fa5]/.test(name))) {
@@ -599,6 +649,7 @@ Deno.serve(async (req) => {
         headline: aiResult.headline,
         story_bullets: aiResult.story_bullets,
         news_links: newsItems,
+        updated_at: completedAt,
       };
       await adminClient.from("daily_reports").upsert(phase2Record, { onConflict: "report_date,symbol" });
     } else {
@@ -620,6 +671,7 @@ Deno.serve(async (req) => {
           `後續觀察：宜留意短線關鍵支撐位表現，以及後續法說會與重要產業消息公布。`,
         ],
         news_links: newsItems,
+        updated_at: completedAt,
       };
       await adminClient.from("daily_reports").upsert(guaranteedRecord, { onConflict: "report_date,symbol" });
     }
@@ -630,6 +682,8 @@ Deno.serve(async (req) => {
         symbol,
         market,
         report_date: reportDate,
+        stage,
+        updated_at: completedAt,
         close_price: priceInfo.price,
         change_percent: priceInfo.change_percent,
       }),

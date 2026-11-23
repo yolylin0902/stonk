@@ -13,17 +13,36 @@ on:
           - ALL
           - US
           - TW
+      stage:
+        description: '指定檢查點階段 (1: 盤後即時快報, 2: 籌碼/盤後完整版, AUTO: 依當前市場時間自動判斷)'
+        required: true
+        default: 'AUTO'
+        type: choice
+        options:
+          - AUTO
+          - '1'
+          - '2'
       limit:
         description: '限制處理股票檔數（測試用，留空代表跑全部）'
         required: false
         default: ''
 
   # 定時觸發排程（時間均為 UTC）
+  # 實現兩段式 Checkpoint：台股（14:05 & 17:15）與美股（16:35 & 18:30，自動支援冬夏令時）
   schedule:
-    # 1. 美股收盤後：UTC 21:35 (台灣時間週二至週六 05:35)
-    - cron: '35 21 * * 1-5'
-    # 2. 台股收盤後：UTC 06:05 (台灣時間週一至週五 14:05)
+    # ── 台股兩段式檢查點 (台灣時間週一至週五，UTC+8) ──
+    # 1. 台股第一波 盤後快報：14:05 (UTC 06:05)
     - cron: '5 6 * * 1-5'
+    # 2. 台股第二波 籌碼完整版：17:15 (UTC 09:15，納入三大法人籌碼)
+    - cron: '15 9 * * 1-5'
+
+    # ── 美股兩段式檢查點 (美東時間週一至週五，依冬令/夏令時配置對應排程) ──
+    # 3. 美股第一波 盤後快報：16:35 NY (夏令 EDT: UTC 20:35 / 冬令 EST: UTC 21:35)
+    - cron: '35 20 * * 1-5'
+    - cron: '35 21 * * 1-5'
+    # 4. 美股第二波 盤後完整版：18:30 NY (夏令 EDT: UTC 22:30 / 冬令 EST: UTC 23:30)
+    - cron: '30 22 * * 1-5'
+    - cron: '30 23 * * 1-5'
 
 jobs:
   run-crawler:
@@ -55,14 +74,43 @@ jobs:
             LIMIT_FLAG="--limit ${{ github.event.inputs.limit }}"
           fi
 
+          STAGE_FLAG=""
+          if [ -n "${{ github.event.inputs.stage }}" ] && [ "${{ github.event.inputs.stage }}" != "AUTO" ]; then
+            STAGE_FLAG="--stage ${{ github.event.inputs.stage }}"
+          fi
+
           if [ "${{ github.event_name }}" = "schedule" ]; then
             CLEAN_SCHEDULE=$(echo "${{ github.event.schedule }}" | tr -s ' ' | xargs)
+            echo "⏰ 觸發排程 Cron: '$CLEAN_SCHEDULE'"
+
             case "$CLEAN_SCHEDULE" in
-              "35 21 * * 1-5")
-                echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US" >> $GITHUB_ENV
-                ;;
               "5 6 * * 1-5")
-                echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW" >> $GITHUB_ENV
+                echo "🇹🇼 執行台股第一波盤後快報 (14:05)"
+                echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW --stage 1" >> $GITHUB_ENV
+                ;;
+              "15 9 * * 1-5")
+                echo "🇹🇼 執行台股第二波籌碼完整版 (17:15)"
+                echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW --stage 2" >> $GITHUB_ENV
+                ;;
+              "35 20 * * 1-5" | "35 21 * * 1-5")
+                NY_HOUR=$(TZ="America/New_York" date +%H)
+                echo "🇺🇸 檢查美股第一波盤後快報排程，目前美東時間小時為: $NY_HOUR 時"
+                if [ "$NY_HOUR" -eq 16 ]; then
+                  echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US --stage 1" >> $GITHUB_ENV
+                else
+                  echo "⏭️ 當前美東時間非 16:35 檢查點（夏冬令排程互補），安全略過本次觸發。"
+                  echo "SKIP_RUN=true" >> $GITHUB_ENV
+                fi
+                ;;
+              "30 22 * * 1-5" | "30 23 * * 1-5")
+                NY_HOUR=$(TZ="America/New_York" date +%H)
+                echo "🇺🇸 檢查美股第二波盤後完整版排程，目前美東時間小時為: $NY_HOUR 時"
+                if [ "$NY_HOUR" -eq 18 ]; then
+                  echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US --stage 2" >> $GITHUB_ENV
+                else
+                  echo "⏭️ 當前美東時間非 18:30 檢查點（夏冬令排程互補），安全略過本次觸發。"
+                  echo "SKIP_RUN=true" >> $GITHUB_ENV
+                fi
                 ;;
               *)
                 UTC_HOUR=$((10#$(date -u +%H)))
@@ -77,11 +125,11 @@ jobs:
             # workflow_dispatch 手動觸發
             SELECTED_MARKET="${{ github.event.inputs.market }}"
             if [ "$SELECTED_MARKET" = "US" ]; then
-              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US $LIMIT_FLAG" >> $GITHUB_ENV
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market US $STAGE_FLAG $LIMIT_FLAG" >> $GITHUB_ENV
             elif [ "$SELECTED_MARKET" = "TW" ]; then
-              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW $LIMIT_FLAG" >> $GITHUB_ENV
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py --market TW $STAGE_FLAG $LIMIT_FLAG" >> $GITHUB_ENV
             else
-              echo "EXEC_CMD=python scripts/fetch_and_analyze.py $LIMIT_FLAG" >> $GITHUB_ENV
+              echo "EXEC_CMD=python scripts/fetch_and_analyze.py $STAGE_FLAG $LIMIT_FLAG" >> $GITHUB_ENV
             fi
           fi
 
@@ -95,6 +143,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL || 'gemini-3.5-flash' }}
         run: |
+          if [ "$SKIP_RUN" = "true" ]; then
+            echo "✅ 本次觸發已安全略過（非當前冬/夏令對應時段）。"
+            exit 0
+          fi
           if [ -z "$EXEC_CMD" ]; then
             echo "❌ 錯誤：未定義執行命令 EXEC_CMD，排程或參數可能異常。"
             exit 1

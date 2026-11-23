@@ -24,12 +24,11 @@ export const needsAiAnalysis = (headline) => {
   return false
 }
 
-// 取得特定市場在目前當地時間下，最近一次「應完成盤後新聞整理」的交易日期 (YYYY-MM-DD)
-// 台股：以 Asia/Taipei 時區計算，週一至週五 13:30 (收盤整理時間) 後為當日，收盤前或週末為前一交易日
-// 美股：以 America/New_York 時區計算，週一至週五 16:00 (收盤整理時間) 後為當日，收盤前或週末為前一交易日
-export const getExpectedMarketDate = (targetMarket) => {
+// 取得市場兩段式檢查點資訊與對齊日期
+// 台股（UTC+8 台灣時間）：第一波 14:05（盤後即時新聞與收盤定價）、第二波 17:15（納入三大法人籌碼與傍晚深度分析）
+// 美股（美東時間）：第一波 16:35（正規盤收盤與盤後快訊）、第二波 18:30（盤後交易與華爾街完整總結）
+export const getMarketCheckpointInfo = (targetMarket, now = new Date()) => {
   const tz = targetMarket === 'TW' ? 'Asia/Taipei' : 'America/New_York'
-  const now = new Date()
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     year: 'numeric',
@@ -49,32 +48,97 @@ export const getExpectedMarketDate = (targetMarket) => {
   const minute = parseInt(getPart('minute'), 10)
   const weekday = getPart('weekday')
 
-  const closeMinutes = targetMarket === 'TW' ? 13 * 60 + 30 : 16 * 60
   const currentMinutes = hour * 60 + minute
+  const cp1 = targetMarket === 'TW' ? 14 * 60 + 5 : 16 * 60 + 35
+  const cp2 = targetMarket === 'TW' ? 17 * 60 + 15 : 18 * 60 + 30
 
-  const target = new Date(Date.UTC(year, month, day))
+  let cpYear = year, cpMonth = month, cpDay = day, cpHour = 0, cpMinute = 0
+  let stage = 0
+
   const isWeekend = weekday === 'Sat' || weekday === 'Sun'
-  const isPastClose = currentMinutes >= closeMinutes
-
   if (isWeekend) {
     const daysToSubtract = weekday === 'Sat' ? 1 : 2
-    target.setUTCDate(target.getUTCDate() - daysToSubtract)
-  } else if (!isPastClose) {
-    const daysToSubtract = weekday === 'Mon' ? 3 : 1
-    target.setUTCDate(target.getUTCDate() - daysToSubtract)
+    const fridayDate = new Date(Date.UTC(year, month, day))
+    fridayDate.setUTCDate(fridayDate.getUTCDate() - daysToSubtract)
+
+    cpYear = fridayDate.getUTCFullYear()
+    cpMonth = fridayDate.getUTCMonth()
+    cpDay = fridayDate.getUTCDate()
+    cpHour = Math.floor(cp2 / 60)
+    cpMinute = cp2 % 60
+    stage = 2
+  } else {
+    if (currentMinutes >= cp2) {
+      cpHour = Math.floor(cp2 / 60)
+      cpMinute = cp2 % 60
+      stage = 2
+    } else if (currentMinutes >= cp1) {
+      cpHour = Math.floor(cp1 / 60)
+      cpMinute = cp1 % 60
+      stage = 1
+    } else {
+      const prevTradingDate = new Date(Date.UTC(year, month, day))
+      const daysToSubtract = weekday === 'Mon' ? 3 : 1
+      prevTradingDate.setUTCDate(prevTradingDate.getUTCDate() - daysToSubtract)
+
+      cpYear = prevTradingDate.getUTCFullYear()
+      cpMonth = prevTradingDate.getUTCMonth()
+      cpDay = prevTradingDate.getUTCDate()
+      cpHour = Math.floor(cp2 / 60)
+      cpMinute = cp2 % 60
+      stage = 2
+    }
   }
 
-  const y = target.getUTCFullYear()
-  const mo = String(target.getUTCMonth() + 1).padStart(2, '0')
-  const da = String(target.getUTCDate()).padStart(2, '0')
-  return `${y}-${mo}-${da}`
+  const yStr = cpYear
+  const mStr = String(cpMonth + 1).padStart(2, '0')
+  const dStr = String(cpDay).padStart(2, '0')
+  const targetTradingDate = `${yStr}-${mStr}-${dStr}`
+
+  const getUtcTimestamp = (y, mo, da, h, mi, timeZone) => {
+    const utcGuess = new Date(Date.UTC(y, mo, da, h, mi, 0))
+    const invParts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: 'numeric', minute: 'numeric', second: 'numeric',
+      hour12: false,
+    }).formatToParts(utcGuess)
+    const getP = (t) => invParts.find((p) => p.type === t)?.value || '0'
+    const asLocal = new Date(Date.UTC(
+      parseInt(getP('year'), 10),
+      parseInt(getP('month'), 10) - 1,
+      parseInt(getP('day'), 10),
+      parseInt(getP('hour'), 10),
+      parseInt(getP('minute'), 10),
+      parseInt(getP('second'), 10)
+    ))
+    const offset = asLocal.getTime() - utcGuess.getTime()
+    return utcGuess.getTime() - offset
+  }
+
+  const checkpointTimestamp = getUtcTimestamp(cpYear, cpMonth, cpDay, cpHour, cpMinute, tz)
+  return { targetTradingDate, stage, checkpointTimestamp }
 }
 
-// 判定既有報告是否過期（若報告所屬日期早於該市場最新收盤交易日，判定新聞摘要過期需要重新整理）
+// 取得特定市場在目前當地時間下，最近一次「應完成盤後新聞整理」的交易日期 (YYYY-MM-DD)
+export const getExpectedMarketDate = (targetMarket) => {
+  return getMarketCheckpointInfo(targetMarket).targetTradingDate
+}
+
+// 判定既有報告是否過期：
+// 規則：找出當下時間點之前最近一個已通過的檢查點，只要報告所屬日期早於該交易日，
+// 或同一交易日內 updated_at 早於該檢查點時間戳，就判定新聞摘要過期並觸發重整覆蓋
 export const isReportStale = (report, targetMarket) => {
-  if (!report || !report.report_date) return true
-  const expectedDate = getExpectedMarketDate(targetMarket)
-  return report.report_date < expectedDate
+  if (!report) return true
+  const cpInfo = getMarketCheckpointInfo(targetMarket)
+  if (!report.report_date || report.report_date < cpInfo.targetTradingDate) {
+    return true
+  }
+  const reportTime = new Date(report.updated_at || report.created_at || 0).getTime()
+  if (reportTime < cpInfo.checkpointTimestamp) {
+    return true
+  }
+  return false
 }
 
 // 判斷是否為真正的官方純大盤指數（嚴格只認 ^ 開頭，例如美股 ^GSPC, ^IXIC, ^DJI, ^SOX；台股 ^TWII）
@@ -273,6 +337,8 @@ export default function App() {
           [currentStock.name]
         )
 
+        const cpInfo = getMarketCheckpointInfo(currentStock.market || targetMarket)
+
         setTimeout(() => {
           supabase.functions
             .invoke('sync-stock', {
@@ -281,6 +347,7 @@ export default function App() {
                 symbol: currentStock.symbol,
                 name: effectiveName,
                 market: currentStock.market || targetMarket,
+                stage: cpInfo.stage,
               },
             })
             .then(() => {

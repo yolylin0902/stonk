@@ -37,6 +37,60 @@ export class StockCardErrorBoundary extends Component {
   }
 }
 
+// 取得卡片所屬的兩段式檢查點階段與時間資訊 (Stage 1: 盤後快報, Stage 2: 籌碼/盤後完整版)
+export const getReportStageInfo = (report) => {
+  if (!report || report.isPending) return null
+  if (report.headline?.includes('查無報價') || report.headline?.includes('尚無紀錄')) return null
+
+  const targetMarket = report.market || 'US'
+  const tz = targetMarket === 'TW' ? 'Asia/Taipei' : 'America/New_York'
+
+  let stage = report.stage
+  let timeFormatted = ''
+
+  const timestamp = report.updated_at || report.created_at
+  if (timestamp) {
+    const dateObj = new Date(timestamp)
+    if (!isNaN(dateObj.getTime())) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false,
+      }).formatToParts(dateObj)
+      const getP = (t) => parts.find((p) => p.type === t)?.value || '0'
+      const h = parseInt(getP('hour'), 10)
+      const m = parseInt(getP('minute'), 10)
+      const totalMin = h * 60 + m
+
+      timeFormatted = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+
+      if (!stage) {
+        // 台股: CP1 = 14:05 (845m), CP2 = 17:15 (1035m)
+        // 美股: CP1 = 16:35 (995m), CP2 = 18:30 (1110m)
+        const cp1 = targetMarket === 'TW' ? 14 * 60 + 5 : 16 * 60 + 35
+        const cp2 = targetMarket === 'TW' ? 17 * 60 + 15 : 18 * 60 + 30
+
+        if (totalMin >= cp2 || totalMin < 12 * 60) {
+          stage = 2
+        } else if (totalMin >= cp1) {
+          stage = 1
+        } else {
+          stage = 2
+        }
+      }
+    }
+  }
+
+  if (!stage) return null
+
+  const label = stage === 2
+    ? (targetMarket === 'TW' ? '籌碼完整版' : '盤後完整版')
+    : '盤後快報'
+
+  return { stage, label, timeFormatted }
+}
+
 function StockCardContent({
   report,
   liveQuote,
@@ -59,6 +113,8 @@ function StockCardContent({
     isPending,
     isAiPending,
   } = report || {}
+
+  const stageInfo = getReportStageInfo(report)
 
   // 判斷是否顯示盤中即時報價疊加層（不更動既有收盤報告，僅在盤中/最新交易時段視覺疊加）
   let isLiveOverlay = false
@@ -237,8 +293,15 @@ function StockCardContent({
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80 animate-pulse shrink-0" />
             ) : null}
           </div>
-          <p className="text-[12px] text-white/50 truncate mt-0.5 leading-tight">
-            {name || symbol}
+          <p className="text-[12px] text-white/50 truncate mt-0.5 leading-tight flex items-center gap-1.5">
+            <span className="truncate">{name || symbol}</span>
+            {stageInfo && (
+              <span className={`text-[10px] shrink-0 font-medium ${
+                stageInfo.stage === 2 ? 'text-emerald-400/80' : 'text-sky-400/80'
+              }`}>
+                · {stageInfo.label}
+              </span>
+            )}
           </p>
         </div>
 
@@ -273,9 +336,24 @@ function StockCardContent({
             <div className="px-4 pb-4 pt-3 border-t border-white/[0.08] space-y-3.5">
               {/* 頂部資訊與操作列 */}
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center flex-wrap gap-2">
                   {sentiment && (
                     <span className={sentimentCls}>{sentiment}</span>
+                  )}
+                  {stageInfo && !isPending && (
+                    <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-medium border ${
+                      stageInfo.stage === 2
+                        ? 'bg-emerald-500/[0.12] text-emerald-300 border-emerald-500/20'
+                        : 'bg-sky-500/[0.12] text-sky-300 border-sky-500/20'
+                    }`}>
+                      <span>{stageInfo.label}</span>
+                      {stageInfo.timeFormatted && (
+                        <>
+                          <span className="text-white/20">·</span>
+                          <span className="tabular-nums opacity-80">{stageInfo.timeFormatted}</span>
+                        </>
+                      )}
+                    </span>
                   )}
                   {isLiveOverlay && liveTagLabel ? (
                     <span className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-white/[0.08] border border-white/[0.10] text-[10px] text-white/70 font-medium">
